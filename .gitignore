@@ -1,0 +1,22 @@
+# 맥 시스템 파일 무시
+.DS_Store
+
+# 프론트엔드 관련 무시
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+
+# 백엔드 관련 무시
+backend/__pycache__/
+backend/venv/
+backend/.venv/
+backend/*.pyc
+
+# ⚠️ 보안 중요: API 키가 들어있는 파일은 절대 올리면 안 됨!
+backend/.env
+backend/.env.local
+
+# 데이터베이스 파일 (선택사항: DB 데이터도 옮기고 싶으면 이 줄을 지우세요)
+*.db
+*.sqlite3

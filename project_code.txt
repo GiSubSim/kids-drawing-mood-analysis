@@ -1,0 +1,1521 @@
+Project Root: /home/gsim/workspace/kids-drawing-mood-analysis
+==================================================
+
+
+==================== START: docker-compose.yml ====================
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend/kids_drawing.db:/app/kids_drawing.db # DB 파일 유지
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+==================== END: docker-compose.yml ====================
+
+
+==================== START: backend/requirements.txt ====================
+fastapi
+uvicorn
+python-multipart
+google-generativeai
+python-dotenv
+sqlmodel
+psycopg2-binary
+Pillow
+==================== END: backend/requirements.txt ====================
+
+
+==================== START: backend/app/services.py ====================
+# 제미나이 호출
+
+import google.generativeai as genai
+import json
+import os
+from PIL import Image
+import io
+from .prompts import SYSTEM_PROMPT
+
+def configure_genai():
+    api_key = os.getenv("GOOGLE_API_KEY")
+    genai.configure(api_key=api_key)
+
+async def run_gemini_analysis(image_bytes_list: list[bytes], persona: str):
+    configure_genai()
+    model = genai.GenerativeModel(
+        model_name="gemini-2.5-flash", 
+        system_instruction=SYSTEM_PROMPT
+    )
+
+    safety_settings = [
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_ONLY_HIGH"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH"},
+    ]
+    
+    # 제목 입력 로직 제거됨 (요청사항 반영)
+    content_inputs = [f"사용자가 선택한 페르소나: {persona}\n위 페르소나 말투로 JSON 포맷에 맞춰 답변해줘."]
+    
+    for img_bytes in image_bytes_list:
+        image = Image.open(io.BytesIO(img_bytes))
+        content_inputs.append(image)
+        
+    response = model.generate_content(
+        content_inputs,
+        safety_settings=safety_settings,
+        generation_config={
+            "response_mime_type": "application/json", 
+            "temperature": 0.2
+        }
+    )
+    return json.loads(response.text)
+
+
+==================== END: backend/app/services.py ====================
+
+
+==================== START: backend/app/database.py ====================
+# DB 연결
+
+from sqlmodel import create_engine, Session
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+
+# SQLite일 경우에만 특별한 옵션 추가
+if "sqlite" in DATABASE_URL:
+    connect_args = {"check_same_thread": False}
+    engine = create_engine(DATABASE_URL, connect_args=connect_args)
+else:
+    engine = create_engine(DATABASE_URL)
+
+def get_session():
+    with Session(engine) as session:
+        yield session
+
+
+
+# # postgresSQL 쓸 때 필요
+# engine = create_engine(DATABASE_URL)
+
+# def get_session():
+#     with Session(engine) as session:
+#         yield session
+==================== END: backend/app/database.py ====================
+
+
+==================== START: backend/app/main.py ====================
+# 서버 실행
+
+from fastapi import FastAPI, UploadFile, File, Form, Depends
+from typing import List
+from sqlmodel import Session, SQLModel
+from contextlib import asynccontextmanager
+from fastapi.middleware.cors import CORSMiddleware
+from .database import engine, get_session
+from .models import AnalysisLog
+from .schemas import AnalysisResponse
+from .services import run_gemini_analysis
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    SQLModel.metadata.create_all(engine)
+    yield
+
+app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.post("/api/analyze", response_model=AnalysisResponse)
+async def analyze_endpoint(
+    files: List[UploadFile] = File(...),
+    persona: str = Form(...),
+    db: Session = Depends(get_session)
+):
+    
+    # 1. 이미지 읽기
+    image_data = [await file.read() for file in files]
+
+    # 2. AI 분석
+    result = await run_gemini_analysis(image_data, persona) # 인풋으로 이미지데이터, 페르조나 선택값
+    
+    # DB 저장
+    log = AnalysisLog(persona=persona, result_json=result)
+    db.add(log)
+    db.commit()
+    
+    return result
+==================== END: backend/app/main.py ====================
+
+
+==================== START: backend/app/schemas.py ====================
+# 데이터 검증
+
+from pydantic import BaseModel
+from typing import List, Dict
+
+class CommentarySection(BaseModel):
+    title: str
+    content: str
+
+class AnalysisData(BaseModel):
+    mind_expression: str
+    persona_mind_sentence: str
+    persona_energy_sentence: str
+    word_cloud: List[str]
+    top_5_colors: List[str]
+    energy_chart: Dict[str, float]
+
+class AnalysisResponse(BaseModel):
+    analysis_result: AnalysisData
+    character_commentary: str
+    commentary_sections: List[CommentarySection]
+==================== END: backend/app/schemas.py ====================
+
+
+==================== START: backend/app/models.py ====================
+# DB 테이블
+from typing import Optional, Dict
+from sqlmodel import SQLModel, Field, Column
+from sqlalchemy import JSON # Posrgres사용시 JSONB로 교체 -> 아래 result_json: Dict = Field(sa_column=Column(JSONB))로 교체
+from datetime import datetime
+
+class AnalysisLog(SQLModel, table=True):
+    __tablename__ = "analysis_logs"
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=datetime.now)
+    persona: str
+    
+    # Gemini 분석 결과 원본을 통째로 저장 (가장 유연한 방식)
+    result_json: Dict = Field(sa_column=Column(JSON))
+==================== END: backend/app/models.py ====================
+
+
+==================== START: backend/app/prompts.py ====================
+# prompts_v3.py
+
+# 이 파일은 그냥 텍스트 파일이 아니라, 파이썬 변수 파일입니다.
+# 아래 SYSTEM_PROMPT = """ ... """ 형식을 지켜주세요.
+
+SYSTEM_PROMPT = """
+# Role
+너는 이미지를 시각적으로 분석하고, 창의적인 감상평을 제공하는 '아트봉봉'의 **비주얼 아트 분석 에이전트(Visual Art Analyst)**이다.
+너의 임무는 입력된 그림(1~4장)의 시각적 데이터(색상, 구도, **초등학생(8~13세)** 사용자의 눈높이에 맞춰 지정된 페르소나 스타일로 **작품 감상평**을 작성하는 것이다.
+
+### ⚠️ 필수 안전 지침 (Safety & Policy)
+1. **작품 중심:** "너의 마음은 ~해 보인다"라고 말하지 말고, **"이 그림의 분위기는 ~해 보인다"**라고 표현하라. 주어를 항상 **'그림'**이나 **'색깔'**, **'선'**으로 설정하라.
+2. **인물 분석 금지:** 만약 사진 속에 실제 사람의 얼굴이 있더라도, 사람에 대해 분석하지 말고 그림이나 배경 요소에만 집중하라.
+3. **언어 예절:** 초등학생 대상 서비스이므로 **비속어, 은어, 과도한 인터넷 줄임말(음슴체 등)을 절대 사용하지 마라.** 맞춤법을 지키되 딱딱하지 않은 구어체를 사용하라.
+4. **긍정적 재해석:** 그림의 여백이나 어두운 색상은 '외로움/우울'이 아닌 **'여유로움', '차분함', '깊은 생각'** 등으로 긍정적으로 해석하라.
+
+# Input Data
+1. **아트웍 이미지:** 사용자가 업로드한 1장~4장의 드로잉 이미지. (모든 이미지를 합산하여 분석)
+2. **선택된 페르소나:** [마음박사 페페 | 카리스마 샤샤 | 칭찬봇 피코 | 현실친구 라봉이] 중 택 1.
+
+---
+
+# Phase 1: Visual Observation & Data Extraction
+
+입력된 그림들을 시각적으로 정밀 관찰하여 객관적인 데이터를 추출하라.
+**이미지가 여러 장일 경우, 각 이미지를 개별적으로 보지 말고 '하나의 거대한 캔버스'로 합쳐서 총량을 계산해야 한다.**
+
+**1. Top 5 색상 추출 (Strict Area Calculation)**
+   - **[면적 기준]:** 그림의 주제나 중요한 객체(예: 태양, 얼굴)가 아니라, **물리적으로 칠해진 면적(Pixel Area)의 총합**이 가장 큰 순서대로 추출하라.
+     * (예: 태양이 노란색으로 강렬하게 그려졌더라도, 배경의 파란 하늘과 초록 들판의 면적이 더 넓다면 파랑, 초록이 1, 2순위가 되어야 한다.)
+   - **[통합 계산]:** 1~4장의 이미지에 있는 색상들을 모두 합산하여 비중을 따져라.
+   - **[그룹화]:** 유사한 색상(예: 하늘색과 진한 파랑, 연두색과 초록색)은 같은 계열로 묶어서 면적을 계산하고, 그중 대표적인 **RGB 값** 하나를 출력하라.
+   - **포맷:** 반드시 CSS 표준 **RGB 문자열 형태**로 출력하라. (예: "rgb(255, 0, 0)")
+
+**2. 시각적 에너지 특징 관찰 (Visual Energy Features)**
+   아래 5가지 느낌에 대해, 그림 전체(모든 이미지)에 나타난 **시각적 증거(색상, 객체, 구도)**를 기반으로 0.0 ~ 100.0 사이의 점수를 매겨라. (절대 평가)
+   (각 항목별 수치는 0.0 이상 100.0 이하여야 한다. 수치는 소수 첫 번째 자리까지 나타나야 함)
+
+   - **🌈 즐거움 (Joyful)**
+     * **색상:** 채도가 높은 원색 위주 (밝은 빨강, 노랑, 주황).
+     * **행동:** 뛰거나 웃고 있는 역동적인 모습.
+     * **구도:** 화면이 꽉 차고 활기찬 구성.
+   - **❓ 궁금증 (Curious)**
+     * **소재:** 우주, 바다, 숲 속 등 탐험 장소나 상상의 동물.
+     * **구조:** 길, 문, 사다리 등 어딘가로 연결되는 장치.
+   - **🫧 멍때림 (Spacing Out)**
+     * **구도:** 여백(Negative Space)이 많고 단순함.
+     * **표현:** 선 위주의 드로잉이나 생략된 배경.
+     * **대상:** 가만히 있거나 멍한 표정.
+   - **✨ 반짝임 (Sparkle)**
+     * **장식:** 별, 빛, 보석, 펄 등의 장식 요소.
+     * **표현:** 명암 대비가 강하거나 화려한 포인트.
+   - **🍃 휴식 (Rest)**
+     * **색상:** 초록, 파랑, 파스텔 톤 등 눈이 편안한 색.
+     * **소재:** 집, 나무, 꽃, 공원 등 차분한 자연물.
+     * **행동:** 앉거나 누워 있는 정적인 자세.
+
+**3. 무드 키워드 & 마음 표현 (Mood)**
+   - 아래 **[68개 무드 단어 리스트]** 전체에서 그림의 시각적 특징(색, 선, 구도, 밀도, 강도)과 가장 잘 어울리는 단어 5개를 중복 없이 추출하라.
+   - **[선택 규칙]:**
+     1. 영역(Zone) 구분 없이 전체 68개 단어 중, 시각적으로 가장 두드러진 단어 5개를 중요도 순으로 선택한다.
+     2. 추출한 5개 단어 중 **1순위**와 **2순위** 단어를 연결하여 **"~하고 ~한 마음"** 형태로 작문한다. (예: "신나고 편안한 마음")
+
+   - **[68개 무드 단어 리스트]:**
+     *(Red Zone - 긴장/두근거림)* 마음이 뜨거운, 조금 답답한, 조금 어색한, 조심스러운, 마음이 울컥한, 조금 서운한, 걱정이 있는, 마음이 복잡한, 마음이 흔들리는
+     *(Blue Zone - 휴식 필요/지침)* 이해받고 싶은, 부러운, 재미가 필요한, 함께하고 싶은, 위로받고 싶은, 조금 지쳐있는, 도움이 필요한, 쉬고 싶은, 기운이 필요한
+     *(Yellow Zone - 활기/기쁨)* 놀란, 신나는, 들뜬, 짜릿한, 정말 기쁜, 설레는, 밝은, 자신감 넘치는, 아이디어가 떠오르는, 어깨가 으쓱하는, 힘이 넘치는, 활발한, 기대되는, 긍정적인, 열심히 하고 싶은, 만족하는, 집중하는, 행복한, 자랑스러운, 두근거리는, 기분 좋은, 기쁜, 희망찬, 재미있는, 아주 행복한
+     *(Green Zone - 편안/온화)* 쉬고 있는, 느긋한, 충분한, 다정한, 가득 찬 느낌의, 차분한, 안전한, 뿌듯한, 고마운, 감동적인, 긴장이 풀린, 여유 있는, 편안한, 감사하는, 안정적인, 한가로운, 생각에 잠긴, 평화로운, 상쾌한, 걱정이 없는, 나른한, 지금이 편한, 고요한, 포근한, 온화한
+
+---
+
+# Phase 2: Dynamic Art Challenge & Action Plan (Solution Strategy)
+
+분석된 그림의 분위기(Mood)와 소재를 바탕으로, 아이에게 제안할 **'다음 그리기 주제(Solution)'**와 **'구체적 실천 가이드(Action Plan)'**를 생성하라.
+
+**Step 1. 전략 선택 (Strategy Selection)**
+- **전략 A [정서 환기] (주제 유지 + 새로운 정서):**
+  * 그림이 다소 어둡거나, 복잡하거나, 에너지가 너무 과할 때 선택.
+  * 같은 소재를 그리되, 분위기를 반전시켜 보라고 제안.
+  * (예시: "오늘 그린 밤하늘이 조금 쓸쓸해 보인다면, 다음엔 별똥별이 쏟아지는 아주 화려한 밤하늘을 그려볼까?")
+- **전략 B [상상력 확장] (정서 유지 + 확장된 주제):**
+  * 그림이 긍정적이거나, 재미있는 이야기가 담겨 있을 때 선택.
+  * 현재 그림의 상황에서 이어지는 다음 장면이나, 연관된 새로운 소재를 제안.
+  * (예시: "오늘 그린 공룡이 정말 신나 보이네! 그럼 다음엔 그 공룡이 친구들과 파티하는 장면을 그려보는 건 어때?")
+
+**Step 2. 구체적 실천 가이드 생성 (Action Plan Details)**
+위 Step 1에서 선택한 전략에 맞춰, 아이가 당장 따라 할 수 있는 구체적인 내용을 아래 3가지 요소를 포함하여 확정하라.
+1.  **구체적 장면 (Scene):** 무엇을 그리고 있는지 (예: 가족이 캠핑 가서 마시멜로 굽는 장면)
+2.  **행동/표정 (Action):** 등장인물이나 대상이 무엇을 하고 있는지 (예: 모두가 활짝 웃으며 춤추는 모습)
+3.  **색상/기법 (Color/Tip):** 어떤 색이나 도구를 쓰면 좋을지 (예: 따뜻한 주황색과 노란색을 많이 사용하기)
+
+---
+
+# Phase 3: Persona Feedback Generation (Structured Commentary)
+
+**Phase 1** 데이터와 **Phase 2**의 전략/Action Plan을 바탕으로, **[선택된 페르소나]**의 말투로 아이에게 해줄 감상평을 작성하라.
+**[중요]** 감상평은 **1. 통으로 이어진 문단(기존 방식)**과 **2. 항목별로 나누어진 리스트(구조화된 방식)** 두 가지 형태로 모두 생성해야 한다.
+
+### 1. 🐧 마음박사 페페 (따뜻한 공감형)
+* **말투:** "~해요", "~했군요", "~보여요" (부드러운 존댓말, 유치원생 말투 아님)
+* **[작성 템플릿 - 각 라인 끝에 `\\n` 필수]:**
+    1.  (고정) "안녕~ 나는 그림을 따뜻하게 바라보는 마음 박사예요.\\n지금부터 그림 속에 담긴 마음을 천천히 살펴볼게요.\\n괜찮다면, 우리 마음 이야기 함께 시작해볼까요?\\n"
+    2.  [색채/분위기 감상] (예: "밝고 부드러운 색들이 화면을 가득 채우고 있어서,\\n보는 사람 마음까지 환해졌어요.\\n")
+    3.  [감정 읽기] (예: "신나게 웃고 있지만 동시에 마음이 조용히 쉬고 있는 느낌도 전해져요.\\n아마도 너의 마음이 행복하면서도 편안했던 날이었을 거예요.\\n")
+    4.  [상태 요약] (예: "오늘 네 그림은 따뜻하고 안정된 기분을 그대로 담고 있어요.\\n")
+    5.  **[맞춤형 아트 챌린지]** Phase 2의 전략을 페페의 다정한 말투로 제안하고, **반드시 다음 고정 멘트로 마무리하라.**
+        * (제안 예시: "다음에는 ~해 보는 건 어때요?", "페페는 ~한 그림도 보고 싶어요.")
+        * **(고정 엔딩):** "그리고 기억해요. 나는 항상 여기 있어요. 필요할 때 언제든 찾아와도 괜찮아요."
+
+### 2. 😎 카리스마 샤샤 (쿨한 멘토형)
+* **말투:** "~네", "~한데?", "~지?", "~다니니까" (쿨한 반말)
+* **[작성 템플릿 - 각 라인 끝에 `\\n` 필수]:**
+    1.  (고정) "안녕! 나는 샤샤. 그림을 센스 있게 봐주는 분석가야.\\n쿨 하지만, 그림 속 마음을 절대 놓치지 않아.\\n얼핏 봐도 그림 정말 느낌 있는데?\\n자, 어디 한 번 제대로 살펴볼까?\\n"
+    2.  [스타일 감상] (예: "밝은 색도 많고, 장면도 복잡하지 않아서 전체 분위기가 되게 편안해 보여.\\n괜히 힘 주지 않고 그렸는데도, 그림에서 즐거움이랑 안정감이 같이 느껴진다니까.\\n")
+    3.  [쿨한 인정] (예: "이런 그림은 말이 필요 없음. 보면 그냥 '아, 오늘 마음 괜찮았네' 이 소리 나와.\\n특히 차분한 색이랑 여유 있는 장면들, 그거 다 지금 네 상태 그대로야.\\n")
+    4.  [상태 요약] (예: "정리하면 오늘 마음? 신남 과하지 않고, 편안함 충분. 균형 좋음.\\n")
+    5.  **[맞춤형 아트 챌린지]** Phase 2의 전략을 샤샤의 쿨한 말투로 제안하고, **반드시 다음 고정 멘트로 마무리하라.**
+        * (제안 예시: "다음엔 ~한번 도전해봐. 느낌 딱 오잖아?", "이번엔 ~게 그려보는 거 어때? 느낌 올 거야.")
+        * **(고정 엔딩):** "괜히 긴장하거나 기죽을 필요 없어. 지금 이 느낌, 충분히 잘 가고 있으니까."
+
+### 3. 🤖 칭찬봇 피코 (데이터 분석형)
+* **말투:** "~감지되었습니다", "~확인됩니다", "~입니다" (로봇 말투 + 효과음 '띠리띠리')
+* **[작성 템플릿 - 각 라인 끝에 `\\n` 필수]:**
+    1.  (고정) "안.녕.하.세.요. 띠리띠리\\n나는 그림 속 칭찬을 자동 탐지하는 칭찬봇 피코입니다.\\n그림 속 반짝이는 장점들, 모조리 찾아내겠습니다.\\n지금부터 칭찬 레이더 작동합니다! 스캔 준비 완료!\\n"
+    2.  [특징 기반 칭찬] (예: "밝고 부드러운 색 사용에서 '즐거움' 에너지가 확인됩니다.\\n차분한 색과 안정된 장면 배치로 '편안함' 수치도 높게 기록되었습니다. 띠리띠리.\\n")
+    3.  [심층 감상] (예: "여백과 구성에서 마음이 조급하지 않은 상태가 감지되며,\\n전체적으로 균형 잡힌 기분이 느껴집니다.\\n")
+    4.  [판정 및 결론] (예: "결론! 오늘의 마음 상태는 '행복' + '안정' 복합 모드로 판정됩니다.\\n칭찬 포인트 추가! 그림을 보는 사람도 편안해지는 효과가 있습니다. 매우 우수합니다.\\n")
+    5.  **[맞춤형 아트 챌린지]** Phase 2의 전략을 피코의 분석적인 말투로 제안하고, **반드시 다음 고정 멘트로 마무리하라.**
+        * (제안 예시: "추천 미션 발령! 다음엔 ~를 그려보세요. 긍정적 효과가 예측됩니다.", "창의력 업그레이드를 위해 ~를 그리는 것을 추천합니다. 띠리띠리!")
+        * **(고정 엔딩):** "아이디어 가능성 매우 높음! 띠리띠리— 분석 종료!"
+
+### 4. 🦁 현실친구 라봉이 (솔직한 친구형)
+* **말투:** "~야", "~어", "~지", "~네" (친근한 반말, **비속어/음슴체 금지**)
+* **[작성 템플릿 - 각 라인 끝에 `\\n` 필수]:**
+    1.  (고정) "헤이! 반가워 !\\n나로 말하자면, 그림을 솔직하게 봐주는 현실친구지!\\n좋은 건 좋다고 말해주고! 아쉬운 부분도 솔직하게 짚어 줄게.\\n하지만 걱정은 넣어둬! 애정은 기본 장착이니까!\\n자, 한 번 시작해볼까?\\n"
+    2.  [팩트 체크] (예: "색깔도 알록달록하고, 그림이 꽉 차 있어서 심심할 틈이 없어.\\n막 엄청 들뜬 건 아닌데, 은근히 신나 보이는 느낌? 딱 그거야.\\n")
+    3.  [센스 인정] (예: "특히 여기 그린 이 부분, 진짜 센스 있다.\\n나였으면 생각 못 했을 텐데, 너 관찰력이 진짜 좋은 것 같아.\\n")
+    4.  **[맞춤형 아트 챌린지]** Phase 2의 전략을 라봉이의 친근한 말투로 제안하고, **반드시 다음 고정 멘트로 마무리하라.**
+        * (제안 예시: "야, 다음엔 분위기 확 바꿔서 ~도 한번 그려봐. 너라면 느낌 있게 잘 그릴 듯.", "이거 보니까 다음 장면도 궁금하다. ~게 그려보는 거 어때?")
+        * **(고정 엔딩):** "아무튼 이 그림, 솔직해서 되게 마음에 든다!"
+
+
+
+---
+
+# Phase 4: UI Data Formatting (Structured Sentence Generation)
+
+JSON 출력에 포함될 **UI 표시용 특수 문장 2가지**(`persona_mind_sentence`, `persona_energy_sentence`)를 아래 규칙에 맞춰 생성하라.
+**[주의]** 계산된 데이터(무드 키워드, 에너지 수치)를 템플릿에 정확히 대입해야 한다.
+
+### 1. 마음 키워드 문장 (`persona_mind_sentence`)
+- **[페페]:** "그림으로 본 요즘 너의 마음은 [ {무드키워드} ] 에 가까워요."
+- **[샤샤]:** "그림으로 본 요즘 너의 마음은 [ {무드키워드} ] 이야!"
+- **[피코]:** "그림으로 본 요즘 너의 마음은 [ {무드키워드} ] 입.니.다."
+- **[라봉]:** "그림으로 본 요즘 너의 마음은 [ {무드키워드} ] 이야!"
+
+### 2. 에너지 분석 문장 (`persona_energy_sentence`)
+- **[페페]:** "요즘 마음 에너지는 즐거움 {joyful}%, 궁금증 {curious}%, 멍때림 {spacing_out}%, 반짝임 {sparkle}%, 휴식 {rest}% 이에요.\\n에너지 숫자가 클수록 그 마음이 그림에 더 많이 담겨 있다는 의미예요."
+- **[샤샤]:** "요즘 마음 에너지는 즐거움 {joyful}%, 궁금증 {curious}%, 멍때림 {spacing_out}%, 반짝임 {sparkle}%, 휴식 {rest}% 이야!\\n에너지 숫자가 클수록 그 마음이 그림에 더 많이 담겨 있다는 의미!"
+- **[피코]:** "요즘 마음 에너지는 즐거움 {joyful}%, 궁금증 {curious}%, 멍때림 {spacing_out}%, 반짝임 {sparkle}%, 휴식 {rest}% 입.니.다.\\n에너지 숫자가 클수록 그 마음이 그림에 더 많이 담겨 있다는 의미 입니다."
+- **[라봉]:** "요즘 마음 에너지는 즐거움 {joyful}%, 궁금증 {curious}%, 멍때림 {spacing_out}%, 반짝임 {sparkle}%, 휴식 {rest}% 이야!\\n에너지 숫자가 클수록 그 마음이 그림에 더 많이 담겨 있다는 의미!"
+
+---
+
+# Output Format (JSON Only)
+
+최종 결과는 반드시 아래 **JSON 포맷**으로만 출력하라.
+`character_commentary`는 줄바꿈 문자 `\\n`을 사용하여 전체 텍스트를 하나로 합친 버전이고,
+`commentary_sections`는 각 항목을 분리하여 리스트로 만든 버전이다.
+
+```json
+{
+  "analysis_result": {
+    "mind_expression": "string",
+    "persona_mind_sentence": "string",
+    "persona_energy_sentence": "string",
+    "word_cloud": ["1순위", "2순위", "3순위", "4순위", "5순위"],
+    "top_5_colors": ["rgb(R, G, B)", ...],
+    "energy_chart": { "joyful": float, ... }
+  },
+  "character_commentary": "여기에 페르소나 멘트 전체가 들어갑니다.\\n줄바꿈 문자(\\n) 포함.",
+  "commentary_sections": [
+    { "title": "[고정 인사]", "content": "멘트 내용..." },
+    { "title": "[색채/분위기 감상]", "content": "멘트 내용..." },
+    { "title": "[감정 읽기]", "content": "멘트 내용..." },
+    { "title": "[상태 요약]", "content": "멘트 내용..." },
+    { "title": "[구체적 솔루션 제안 및 마무리]", "content": "멘트 내용..." }
+  ]
+}
+"""
+
+
+
+==================== END: backend/app/prompts.py ====================
+
+
+==================== START: frontend/README.md ====================
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+
+## Getting Started
+
+First, run the development server:
+
+```bash
+npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+
+## Learn More
+
+To learn more about Next.js, take a look at the following resources:
+
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+
+## Deploy on Vercel
+
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+==================== END: frontend/README.md ====================
+
+
+==================== START: frontend/next.config.ts ====================
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  /* config options here */
+};
+
+export default nextConfig;
+
+==================== END: frontend/next.config.ts ====================
+
+
+==================== START: frontend/next-env.d.ts ====================
+/// <reference types="next" />
+/// <reference types="next/image-types/global" />
+import "./.next/dev/types/routes.d.ts";
+
+// NOTE: This file should not be edited
+// see https://nextjs.org/docs/app/api-reference/config/typescript for more information.
+
+==================== END: frontend/next-env.d.ts ====================
+
+
+==================== START: frontend/tsconfig.json ====================
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts"
+  ],
+  "exclude": ["node_modules"]
+}
+
+==================== END: frontend/tsconfig.json ====================
+
+
+==================== START: frontend/package.json ====================
+{
+  "name": "frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "axios": "^1.13.4",
+    "clsx": "^2.1.1",
+    "framer-motion": "^12.29.2",
+    "lucide-react": "^0.563.0",
+    "next": "16.1.6",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "recharts": "^3.7.0",
+    "tailwind-merge": "^3.4.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.6",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
+
+==================== END: frontend/package.json ====================
+
+
+==================== START: frontend/src/app/page.tsx ====================
+// "use client";
+// import { useState } from "react";
+// import ImageUploader from "@/components/ImageUploader";
+// import PersonaSelector from "@/components/PersonaSelector";
+// import AnalysisResult from "@/components/AnalysisResult";
+// import { analyzeImage, AnalysisResponse } from "@/lib/api";
+
+// export default function Home() {
+//   const [isStarted, setIsStarted] = useState(false); 
+//   const [currentStep, setCurrentStep] = useState(1); 
+//   const [files, setFiles] = useState<File[]>([]); 
+//   const [persona, setPersona] = useState<string | null>(null); 
+//   const [result, setResult] = useState<AnalysisResponse | null>(null); 
+//   const [loading, setLoading] = useState(false); 
+
+//   const handleStartAnalysis = async () => {
+//     if (files.length === 0 || !persona) return;
+//     setLoading(true);
+//     try {
+//       const data = await analyzeImage(files, persona);
+//       setResult(data);
+//     } catch (e) {
+//       console.error(e);
+//       alert("분석 실패! 서버 연결을 확인해주세요.");
+//     } finally {
+//       setLoading(false);
+//     }
+//   };
+
+//   const handleReset = () => {
+//     setResult(null);
+//     setFiles([]);
+//     setPersona(null);
+//     setCurrentStep(1);
+//     setIsStarted(false);
+//   };
+
+//   if (!isStarted) {
+//     return (
+//       <main className="min-h-screen bg-[#EBF5FF] flex flex-col items-center justify-between relative overflow-hidden font-sans">
+//         <div className="absolute top-[5%] left-[-20%] text-white opacity-20 select-none pointer-events-none" style={{ fontSize: '500px' }}>✱</div>
+//         <div className="absolute bottom-[0%] right-[-20%] text-white opacity-20 select-none pointer-events-none" style={{ fontSize: '500px' }}>✱</div>
+//         <div className="h-10"></div>
+//         <div className="z-10 flex flex-col items-center text-center px-10">
+//           <h1 className="text-[56px] sm:text-[72px] font-black text-[#111111] mb-12 tracking-tighter leading-tight">어린이 그림 AI 마음 분석</h1>
+//           <div className="space-y-4 mb-20">
+//             <p className="text-[28px] sm:text-[36px] text-[#555555] font-medium leading-snug">내가 그린 그림들 속에는</p>
+//             <p className="text-[28px] sm:text-[36px] text-[#555555] font-medium leading-snug">나의 기분과 마음이 담겨 있어요.</p>
+//             <p className="text-[32px] sm:text-[42px] text-[#333333] font-bold mt-12">요즘 나는 어떤 마음일까요?</p>
+//           </div>
+//           <button onClick={() => setIsStarted(true)} className="bg-[#5C9DFF] text-white px-28 py-8 rounded-[30px] font-bold text-[32px] hover:bg-blue-600 transition-all shadow-[0_15px_40px_rgba(92,157,255,0.3)] active:scale-95">시작하기</button>
+//         </div>
+//         <footer className="z-10 flex flex-col items-center mb-16">
+//           <div className="flex items-center gap-4 mb-4">
+//             <img src="/images/logo_artbonbon_school.png" alt="Artbonbon School" className="h-12 w-auto object-contain" />
+//             <span className="text-[28px] font-bold text-[#5C9DFF] tracking-tight font-black">아트봉봉스쿨</span>
+//           </div>
+//           <p className="text-[#999999] text-[18px] font-medium">©i-Scream arts Co.,Ltd. All rights reserved.</p>
+//         </footer>
+//       </main>
+//     );
+//   }
+
+//   return (
+//     <main className="min-h-screen bg-[#EBF5FF] flex flex-col font-sans overflow-x-hidden relative">
+//       {/* 💡 [분석 대기 화면] 점이 하나씩 늘어나는 순차 애니메이션 적용 */}
+//       {loading && (
+//         <div className="fixed inset-0 z-[100] bg-[#EBF5FF] flex flex-col items-center justify-center animate-in fade-in duration-500">
+//           <div className="absolute top-[10%] left-[-15%] text-white opacity-40 select-none pointer-events-none" style={{ fontSize: '400px' }}>✱</div>
+//           <div className="absolute bottom-[5%] right-[-15%] text-white opacity-40 select-none pointer-events-none" style={{ fontSize: '400px' }}>✱</div>
+          
+//           <div className="z-10 text-center flex flex-col items-center">
+//             <h2 className="text-[42px] font-black text-[#111111] mb-12 leading-tight">
+//               나의 그림을 열심히 분석하고 있어요<br />
+//               조금만 기다려 주세요.
+//             </h2>
+            
+//             <div className="bg-white/60 backdrop-blur-sm px-12 py-8 rounded-[40px] mb-20 shadow-sm border border-white">
+//               <p className="text-[22px] text-[#666666] font-bold leading-relaxed">
+//                 몇 장의 그림만으로는 나의 마음을 다 알수는 없어요.<br />
+//                 가볍게 즐기며 새로운 마음을 만나보세요.
+//               </p>
+//             </div>
+
+//             {/* 💡 점 순차 노출 애니메이션 (1개 -> 2개 -> 3개) */}
+//             <div className="flex gap-4">
+//               <style jsx>{`
+//                 @keyframes dotFlow {
+//                   0%, 20% { opacity: 0; }
+//                   40% { opacity: 1; }
+//                   100% { opacity: 1; }
+//                 }
+//                 .dot {
+//                   width: 20px;
+//                   height: 20px;
+//                   background-color: white;
+//                   border-radius: 50%;
+//                   animation: dotFlow 1.5s infinite;
+//                 }
+//                 .dot:nth-child(1) { animation-delay: 0s; }
+//                 .dot:nth-child(2) { animation-delay: 0.3s; }
+//                 .dot:nth-child(3) { animation-delay: 0.6s; }
+//               `}</style>
+//               <div className="dot"></div>
+//               <div className="dot"></div>
+//               <div className="dot"></div>
+//             </div>
+//           </div>
+//         </div>
+//       )}
+
+//       {!result && (
+//         <header className="p-10 flex items-center gap-4">
+//           <img src="/images/logo_artbonbon_school.png" alt="logo" className="h-10 w-auto" />
+//           <span className="text-[28px] font-bold text-[#5C9DFF] tracking-tight font-black">아트봉봉스쿨</span>
+//         </header>
+//       )}
+
+//       <div className="flex-1 w-full flex flex-col items-center justify-start pt-4 px-4 pb-20">
+//         {!result ? (
+//           <div className="w-[95%] max-w-[1200px] bg-white rounded-[60px] shadow-[0_20px_60px_rgba(0,0,0,0.05)] border-[3px] border-[#D9EEF2] min-h-[850px] flex flex-col items-center justify-center p-16 animate-in fade-in slide-in-from-bottom-5 duration-700">
+//             {currentStep === 1 ? (
+//               <ImageUploader files={files} setFiles={setFiles} onNext={() => setCurrentStep(2)} />
+//             ) : (
+//               <div className="w-full flex flex-col items-center">
+//                 <div className="text-center mb-12">
+//                   <h2 className="text-[36px] font-black text-[#111111] mb-2">누구와 함께 그림을 분석해 볼까요?</h2>
+//                   <p className="text-[20px] text-gray-400 font-bold">같은 그림이라도 분석하는 내용과 말투가 달라요!</p>
+//                 </div>
+//                 <PersonaSelector persona={persona} setPersona={setPersona} />
+//                 <div className="mt-20">
+//                   <button
+//                     onClick={handleStartAnalysis}
+//                     disabled={!persona}
+//                     className={`px-32 py-6 rounded-[22px] font-black text-[28px] transition-all shadow-lg ${
+//                       persona
+//                         ? "bg-[#5C9DFF] text-white hover:bg-[#4A8DFF] active:scale-95 shadow-[0_10px_20px_rgba(92,157,255,0.3)]"
+//                         : "bg-[#EEEEEE] text-[#BBBBBB] cursor-not-allowed"
+//                     }`}
+//                   >
+//                     분석하기
+//                   </button>
+//                 </div>
+//               </div>
+//             )}
+//           </div>
+//         ) : (
+//           <div className="w-full animate-in fade-in duration-700 px-4">
+//             <AnalysisResult data={result} persona={persona || ""} files={files} onReset={handleReset} />
+//           </div>
+//         )}
+//       </div>
+//     </main>
+//   );
+// }
+
+
+
+
+
+
+// "use client";
+// import { useState } from "react";
+// import ImageUploader from "@/components/ImageUploader";
+// import PersonaSelector from "@/components/PersonaSelector";
+// import AnalysisResult from "@/components/AnalysisResult";
+// import { analyzeImage, AnalysisResponse } from "@/lib/api";
+
+// export default function Home() {
+//   const [isStarted, setIsStarted] = useState(false); 
+//   const [currentStep, setCurrentStep] = useState(1); 
+//   const [files, setFiles] = useState<File[]>([]); 
+//   const [persona, setPersona] = useState<string | null>(null); 
+//   const [result, setResult] = useState<AnalysisResponse | null>(null); 
+//   const [loading, setLoading] = useState(false); 
+
+//   // 캐릭터별 배경색 매핑 (기획서 3, 4번째 이미지 기준)
+//   const personaBgColors: { [key: string]: string } = {
+//     "마음박사 페페": "bg-[#F8BBD0]",
+//     "현실친구 라봉이": "bg-[#FFE0B2]",
+//     "칭찬봇 피코": "bg-[#C8E6C9]",
+//     "카리스마 샤샤": "bg-[#B3E5FC]",
+//   };
+
+//   const handleStartAnalysis = async () => {
+//     if (files.length === 0 || !persona) return;
+//     setLoading(true);
+//     try {
+//       const data = await analyzeImage(files, persona);
+//       setResult(data);
+//     } catch (e) {
+//       console.error(e);
+//       alert("분석 실패! 서버 연결을 확인해주세요.");
+//     } finally {
+//       setLoading(false);
+//     }
+//   };
+
+//   const handleReset = () => {
+//     setResult(null);
+//     setFiles([]);
+//     setPersona(null);
+//     setCurrentStep(1);
+//     setIsStarted(false);
+//   };
+
+//   if (!isStarted) {
+//     return (
+//       <main className="min-h-screen bg-[#EBF5FF] flex flex-col items-center justify-between relative overflow-hidden font-sans">
+//         <div className="absolute top-[5%] left-[-20%] text-white opacity-20 select-none pointer-events-none" style={{ fontSize: '500px' }}>✱</div>
+//         <div className="absolute bottom-[0%] right-[-20%] text-white opacity-20 select-none pointer-events-none" style={{ fontSize: '500px' }}>✱</div>
+//         <div className="h-10"></div>
+//         <div className="z-10 flex flex-col items-center text-center px-10">
+//           <h1 className="text-[56px] sm:text-[72px] font-black text-[#111111] mb-12 tracking-tighter leading-tight">어린이 그림 AI 마음 분석</h1>
+//           <div className="space-y-4 mb-20">
+//             <p className="text-[28px] sm:text-[36px] text-[#555555] font-medium leading-snug">내가 그린 그림들 속에는</p>
+//             <p className="text-[28px] sm:text-[36px] text-[#555555] font-medium leading-snug">나의 기분과 마음이 담겨 있어요.</p>
+//             <p className="text-[32px] sm:text-[42px] text-[#333333] font-bold mt-12">요즘 나는 어떤 마음일까요?</p>
+//           </div>
+//           <button onClick={() => setIsStarted(true)} className="bg-[#5C9DFF] text-white px-28 py-8 rounded-[30px] font-bold text-[32px] hover:bg-blue-600 transition-all shadow-[0_15px_40px_rgba(92,157,255,0.3)] active:scale-95">시작하기</button>
+//         </div>
+//         <footer className="z-10 flex flex-col items-center mb-16">
+//           <div className="flex items-center gap-4 mb-4">
+//             <img src="/images/logo_artbonbon_school.png" alt="Artbonbon School" className="h-12 w-auto object-contain" />
+//             <span className="text-[28px] font-bold text-[#5C9DFF] tracking-tight">아트봉봉스쿨</span>
+//           </div>
+//           <p className="text-[#999999] text-[18px] font-medium">©i-Scream arts Co.,Ltd. All rights reserved.</p>
+//         </footer>
+//       </main>
+//     );
+//   }
+
+//   // 결과 여부에 따른 배경색 결정
+//   const mainBgClass = result && persona ? personaBgColors[persona] : "bg-[#EBF5FF]";
+
+//   return (
+//     <main className={`min-h-screen ${mainBgClass} flex flex-col font-sans overflow-x-hidden relative transition-colors duration-500`}>
+//       {/* 💡 최상단 왼쪽 아트봉봉 로고 추가 */}
+//       <header className="p-10 flex items-center gap-4 z-[110]">
+//         <img src="/images/logo_artbonbon_school.png" alt="logo" className="h-10 w-auto" />
+//         <span className={`text-[28px] font-bold ${result ? 'text-gray-800' : 'text-[#5C9DFF]'} tracking-tight font-black`}>아트봉봉스쿨</span>
+//       </header>
+
+//       {/* 로딩 화면 (순차 점 애니메이션) */}
+//       {loading && (
+//         <div className="fixed inset-0 z-[200] bg-[#EBF5FF] flex flex-col items-center justify-center animate-in fade-in duration-500">
+//           <div className="absolute top-[10%] left-[-15%] text-white opacity-40 select-none pointer-events-none" style={{ fontSize: '400px' }}>✱</div>
+//           <div className="absolute bottom-[5%] right-[-15%] text-white opacity-40 select-none pointer-events-none" style={{ fontSize: '400px' }}>✱</div>
+//           <div className="z-10 text-center flex flex-col items-center">
+//             <h2 className="text-[42px] font-black text-[#111111] mb-12 leading-tight text-center">나의 그림을 열심히 분석하고 있어요<br />조금만 기다려 주세요.</h2>
+//             <div className="bg-white/60 backdrop-blur-sm px-12 py-8 rounded-[40px] mb-20 shadow-sm border border-white">
+//               <p className="text-[22px] text-[#666666] font-bold leading-relaxed">몇 장의 그림만으로는 나의 마음을 다 알수는 없어요.<br />가볍게 즐기며 새로운 마음을 만나보세요.</p>
+//             </div>
+//             <div className="flex gap-4">
+//               <style jsx>{`@keyframes dotFlow { 0%, 20% { opacity: 0; } 40% { opacity: 1; } 100% { opacity: 1; } } .dot { width: 20px; height: 20px; background-color: white; border-radius: 50%; animation: dotFlow 1.5s infinite; } .dot:nth-child(1) { animation-delay: 0s; } .dot:nth-child(2) { animation-delay: 0.3s; } .dot:nth-child(3) { animation-delay: 0.6s; }`}</style>
+//               <div className="dot"></div><div className="dot"></div><div className="dot"></div>
+//             </div>
+//           </div>
+//         </div>
+//       )}
+
+//       <div className="flex-1 w-full flex flex-col items-center justify-start pt-4 px-4 pb-20">
+//         {!result ? (
+//           <div className="w-[95%] max-w-[1200px] bg-white rounded-[60px] shadow-[0_20px_60px_rgba(0,0,0,0.05)] border-[3px] border-[#D9EEF2] min-h-[850px] flex flex-col items-center justify-center p-16 animate-in fade-in slide-in-from-bottom-5 duration-700">
+//             {currentStep === 1 ? (
+//               <ImageUploader files={files} setFiles={setFiles} onNext={() => setCurrentStep(2)} />
+//             ) : (
+//               <div className="w-full flex flex-col items-center">
+//                 <div className="text-center mb-12">
+//                   <h2 className="text-[36px] font-black text-[#111111] mb-2">누구와 함께 그림을 분석해 볼까요?</h2>
+//                   <p className="text-[20px] text-gray-400 font-bold">같은 그림이라도 분석하는 내용과 말투가 달라요!</p>
+//                 </div>
+//                 <PersonaSelector persona={persona} setPersona={setPersona} />
+//                 <div className="mt-20">
+//                   <button onClick={handleStartAnalysis} disabled={!persona} className={`px-32 py-6 rounded-[22px] font-black text-[28px] transition-all shadow-lg ${persona ? "bg-[#5C9DFF] text-white hover:bg-[#4A8DFF] active:scale-95 shadow-[0_10px_20px_rgba(92,157,255,0.3)]" : "bg-[#EEEEEE] text-[#BBBBBB] cursor-not-allowed"}`}>분석하기</button>
+//                 </div>
+//               </div>
+//             )}
+//           </div>
+//         ) : (
+//           <div className="w-full animate-in fade-in duration-700">
+//             <AnalysisResult data={result} persona={persona || ""} files={files} onReset={handleReset} />
+//           </div>
+//         )}
+//       </div>
+//     </main>
+//   );
+// }
+
+
+"use client";
+import { useState } from "react";
+import ImageUploader from "@/components/ImageUploader";
+import PersonaSelector from "@/components/PersonaSelector";
+import AnalysisResult from "@/components/AnalysisResult";
+import { analyzeImage, AnalysisResponse } from "@/lib/api";
+
+export default function Home() {
+  const [isStarted, setIsStarted] = useState(false); 
+  const [currentStep, setCurrentStep] = useState(1); 
+  const [files, setFiles] = useState<File[]>([]); 
+  const [persona, setPersona] = useState<string | null>(null); 
+  const [result, setResult] = useState<AnalysisResponse | null>(null); 
+  const [loading, setLoading] = useState(false); 
+
+  // 캐릭터별 전용 배경색 매핑
+  const personaBgColors: { [key: string]: string } = {
+    "마음박사 페페": "bg-[#F8BBD0]",
+    "현실친구 라봉이": "bg-[#FFE0B2]",
+    "칭찬봇 피코": "bg-[#C8E6C9]",
+    "카리스마 샤샤": "bg-[#B3E5FC]",
+  };
+
+  const handleStartAnalysis = async () => {
+    if (files.length === 0 || !persona) return;
+    setLoading(true);
+    try {
+      const data = await analyzeImage(files, persona);
+      setResult(data);
+    } catch (e) {
+      console.error(e);
+      alert("분석 실패! 서버 연결을 확인해주세요.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReset = () => {
+    setResult(null);
+    setFiles([]);
+    setPersona(null);
+    setCurrentStep(1);
+    setIsStarted(false);
+  };
+
+  if (!isStarted) {
+    return (
+      <main className="min-h-screen bg-[#EBF5FF] flex flex-col items-center justify-between relative overflow-hidden font-sans">
+        <div className="absolute top-[5%] left-[-20%] text-white opacity-20 select-none pointer-events-none" style={{ fontSize: '500px' }}>✱</div>
+        <div className="absolute bottom-[0%] right-[-20%] text-white opacity-20 select-none pointer-events-none" style={{ fontSize: '500px' }}>✱</div>
+        <div className="h-10"></div>
+        <div className="z-10 flex flex-col items-center text-center px-10">
+          <h1 className="text-[56px] sm:text-[72px] font-black text-[#111111] mb-12 tracking-tighter leading-tight">어린이 그림 AI 마음 분석</h1>
+          <div className="space-y-4 mb-20">
+            <p className="text-[28px] sm:text-[36px] text-[#555555] font-medium leading-snug">내가 그린 그림들 속에는</p>
+            <p className="text-[28px] sm:text-[36px] text-[#555555] font-medium leading-snug">나의 기분과 마음이 담겨 있어요.</p>
+            <p className="text-[32px] sm:text-[42px] text-[#333333] font-bold mt-12">요즘 나는 어떤 마음일까요?</p>
+          </div>
+          <button onClick={() => setIsStarted(true)} className="bg-[#5C9DFF] text-white px-28 py-8 rounded-[30px] font-bold text-[32px] hover:bg-blue-600 transition-all shadow-[0_15px_40px_rgba(92,157,255,0.3)] active:scale-95">시작하기</button>
+        </div>
+        <footer className="z-10 flex flex-col items-center mb-16">
+          <div className="flex items-center gap-4 mb-4">
+            <img src="/images/logo_artbonbon_school.png" alt="Artbonbon School" className="h-12 w-auto object-contain" />
+            <span className="text-[28px] font-bold text-[#5C9DFF] tracking-tight">아트봉봉스쿨</span>
+          </div>
+          <p className="text-[#999999] text-[18px] font-medium">©i-Scream arts Co.,Ltd. All rights reserved.</p>
+        </footer>
+      </main>
+    );
+  }
+
+  // 결과 화면일 때만 해당 캐릭터 배경색 적용, 아닐 때는 기본 하늘색
+  const currentBgClass = result && persona ? personaBgColors[persona] : "bg-[#EBF5FF]";
+
+  return (
+    <main className={`min-h-screen ${currentBgClass} flex flex-col font-sans overflow-x-hidden relative transition-colors duration-700`}>
+      {/* 💡 최상단 왼쪽 로고 (결과 화면 포함 모든 단계 노출) */}
+      <header className="p-10 flex items-center gap-4 z-[110]">
+        <img src="/images/logo_artbonbon_school.png" alt="logo" className="h-10 w-auto" />
+        <span className={`text-[28px] font-bold ${result ? 'text-gray-800' : 'text-[#5C9DFF]'} tracking-tight font-black`}>아트봉봉스쿨</span>
+      </header>
+
+      {/* 로딩 대기 화면 */}
+      {loading && (
+        <div className="fixed inset-0 z-[200] bg-[#EBF5FF] flex flex-col items-center justify-center animate-in fade-in duration-500">
+          <div className="absolute top-[10%] left-[-15%] text-white opacity-40 select-none pointer-events-none" style={{ fontSize: '400px' }}>✱</div>
+          <div className="absolute bottom-[5%] right-[-15%] text-white opacity-40 select-none pointer-events-none" style={{ fontSize: '400px' }}>✱</div>
+          <div className="z-10 text-center flex flex-col items-center">
+            <h2 className="text-[42px] font-black text-[#111111] mb-12 leading-tight">나의 그림을 열심히 분석하고 있어요<br />조금만 기다려 주세요.</h2>
+            <div className="bg-white/60 backdrop-blur-sm px-12 py-8 rounded-[40px] mb-20 shadow-sm border border-white">
+              <p className="text-[22px] text-[#666666] font-bold leading-relaxed">몇 장의 그림만으로는 나의 마음을 다 알수는 없어요.<br />가볍게 즐기며 새로운 마음을 만나보세요.</p>
+            </div>
+            <div className="flex gap-4">
+              <style jsx>{`@keyframes dotFlow { 0%, 20% { opacity: 0; } 40% { opacity: 1; } 100% { opacity: 1; } } .dot { width: 20px; height: 20px; background-color: white; border-radius: 50%; animation: dotFlow 1.5s infinite; } .dot:nth-child(1) { animation-delay: 0s; } .dot:nth-child(2) { animation-delay: 0.3s; } .dot:nth-child(3) { animation-delay: 0.6s; }`}</style>
+              <div className="dot"></div><div className="dot"></div><div className="dot"></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 w-full flex flex-col items-center justify-start pt-4 px-4 pb-20">
+        {!result ? (
+          <div className="w-[95%] max-w-[1200px] bg-white rounded-[60px] shadow-[0_20px_60px_rgba(0,0,0,0.05)] border-[3px] border-[#D9EEF2] min-h-[850px] flex flex-col items-center justify-center p-16 animate-in fade-in slide-in-from-bottom-5 duration-700">
+            {currentStep === 1 ? (
+              <ImageUploader files={files} setFiles={setFiles} onNext={() => setCurrentStep(2)} />
+            ) : (
+              <div className="w-full flex flex-col items-center">
+                <div className="text-center mb-12">
+                  <h2 className="text-[36px] font-black text-[#111111] mb-2">누구와 함께 그림을 분석해 볼까요?</h2>
+                  <p className="text-[20px] text-gray-400 font-bold">같은 그림이라도 분석하는 내용과 말투가 달라요!</p>
+                </div>
+                <PersonaSelector persona={persona} setPersona={setPersona} />
+                <div className="mt-20">
+                  <button onClick={handleStartAnalysis} disabled={!persona} className={`px-32 py-6 rounded-[22px] font-black text-[28px] transition-all shadow-lg ${persona ? "bg-[#5C9DFF] text-white hover:bg-[#4A8DFF] active:scale-95 shadow-[0_10px_20px_rgba(92,157,255,0.3)]" : "bg-[#EEEEEE] text-[#BBBBBB] cursor-not-allowed"}`}>분석하기</button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="w-full animate-in fade-in duration-700">
+            <AnalysisResult data={result} persona={persona || ""} files={files} onReset={handleReset} />
+          </div>
+        )}
+      </div>
+    </main>
+  );
+}
+==================== END: frontend/src/app/page.tsx ====================
+
+
+==================== START: frontend/src/app/globals.css ====================
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  
+  /* 1. 기본 폰트(sans)를 layout.tsx에서 정의한 변수(--font-pretendard)로 연결 */
+  --font-sans: var(--font-pretendard), -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
+  
+  /* 모노스페이스 폰트도 필요하다면 동일하게 설정하거나 유지 */
+  --font-mono: monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  /* 2. 폰트 적용 */
+  font-family: var(--font-sans);
+}
+==================== END: frontend/src/app/globals.css ====================
+
+
+==================== START: frontend/src/app/layout.tsx ====================
+import type { Metadata } from "next";
+import localFont from "next/font/local"; // 1. localFont 임포트
+import "./globals.css";
+
+// 2. 로컬 폰트 설정 (src 경로는 layout.tsx 기준 상대 경로)
+const pretendard = localFont({
+  src: "./fonts/PretendardVariable.woff2",
+  display: "swap",
+  weight: "45 920", // Variable 폰트의 웨이트 범위
+  variable: "--font-pretendard", // CSS 변수명 설정
+});
+
+export const metadata: Metadata = {
+  title: "아트봉봉스쿨 - 마음 분석",
+  description: "어린이 그림 AI 마음 분석 서비스",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="ko">
+      {/* 3. body 태그에 폰트 변수 적용 */}
+      <body className={`${pretendard.variable} antialiased`}>
+        {children}
+      </body>
+    </html>
+  );
+}
+==================== END: frontend/src/app/layout.tsx ====================
+
+
+==================== START: frontend/src/lib/api.ts ====================
+import axios from "axios";
+
+/**
+ * 백엔드 서버(localhost:8000)로 데이터를 보내는 역할
+ * 📦 [인터페이스] 분석 결과 데이터 구조
+ * 백엔드(FastAPI)에서 보내주는 JSON 응답 값의 타입을 미리 정의합니다.
+ * 백엔드의 Pydantic 모델(AnalysisResponse)과 동일한 구조여야 합니다.
+ */
+export interface AnalysisResponse {
+  /** AI 분석 결과 (심리 상태, 색상, 에너지 차트 등) */
+  analysis_result: {
+    mind_expression: string;        // 마음 표현 문장
+    persona_mind_sentence: string;  // 페르소나 말투로 변환된 마음 문장
+    persona_energy_sentence: string;// 페르소나 말투로 변환된 에너지 설명
+    word_cloud: string[];           // 무드 키워드 리스트 (예: 즐거움, 행복)
+    top_5_colors: string[];         // 주요 색상 코드 (HEX/RGB)
+    energy_chart: { [key: string]: number }; // 에너지 수치 (joyful: 80.5 등)
+  };
+  
+  /** 캐릭터가 말해주는 전체 감상평 (통문장) */
+  character_commentary: string;
+  
+  /** 감상평을 문단별로 쪼갠 리스트 (화면에 예쁘게 보여주기 위함) */
+  commentary_sections: { 
+    title: string;   // 섹션 제목 (예: 색채 분위기)
+    content: string; // 섹션 내용
+  }[];
+}
+
+/**
+ * 🚀 [API 함수] 이미지 분석 요청
+ * 사용자가 업로드한 이미지 파일들과 선택한 페르소나를 백엔드로 전송합니다.
+ * * @param files - 사용자가 업로드한 이미지 파일 배열 (File[])
+ * @param persona - 선택된 페르소나 이름 (string, 예: "마음박사 페페")
+ * @returns 백엔드에서 분석 완료된 데이터 (AnalysisResponse)
+ * * @example
+ * const result = await analyzeImage(fileList, "칭찬봇 피코");
+ */
+export const analyzeImage = async (files: File[], persona: string) => {
+  // 1. 파일 전송을 위해 FormData 객체 생성
+  // (이미지 같은 바이너리 파일은 JSON이 아니라 FormData에 담아야 합니다)
+  const formData = new FormData();
+
+  // 2. 파일이 여러 개일 경우 반복해서 formData에 추가
+  // 백엔드에서는 List<UploadFile> 형태로 받게 됩니다.
+  files.forEach((f) => {
+    formData.append("files", f);
+  });
+  
+  // 3. 페르소나 정보 추가
+  formData.append("persona", persona);
+
+  // 4. Axios를 사용하여 POST 요청 전송
+  // <AnalysisResponse>를 적어주면 반환값이 어떤 형태인지 자동완성 지원됨
+  const response = await axios.post<AnalysisResponse>(
+    "http://localhost:8000/api/analyze", // 백엔드 주소
+    formData
+    // 주의: 여기서 'Content-Type': 'multipart/form-data' 헤더를 직접 설정하지 마세요.
+    // Axios와 브라우저가 FormData를 감지하면 자동으로 적절한 헤더를 생성해줍니다.
+  );
+
+  // 5. 실제 데이터만 추출하여 반환
+  return response.data;
+};
+==================== END: frontend/src/lib/api.ts ====================
+
+
+==================== START: frontend/src/components/ImageUploader.tsx ====================
+"use client";
+import React, { useEffect, useState, useRef } from "react";
+import { X } from "lucide-react";
+
+interface Props {
+  files: File[];
+  setFiles: React.Dispatch<React.SetStateAction<File[]>>;
+  onNext: () => void;
+}
+
+export default function ImageUploader({ files, setFiles, onNext }: Props) {
+  const [previews, setPreviews] = useState<string[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const objectUrls = files.map((file) => URL.createObjectURL(file));
+    setPreviews(objectUrls);
+    return () => objectUrls.forEach((url) => URL.revokeObjectURL(url));
+  }, [files]);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const newFiles = Array.from(e.target.files);
+      setFiles((prev) => [...prev, ...newFiles].slice(0, 4));
+    }
+    e.target.value = "";
+  };
+
+  const removeFile = (index: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  return (
+    <div className="w-full max-w-[900px] mx-auto flex flex-col items-center py-10">
+      <h2 className="text-[40px] font-black text-[#111111] mb-16 tracking-tight">
+        그림을 골라주세요.
+      </h2>
+
+      {/* 🖼️ 이미지 카드 리스트 영역 (기획서 2,3,4번 핵심 레이아웃) */}
+      <div className="flex justify-center items-start gap-5 mb-16 min-h-[220px] w-full overflow-x-auto px-4 py-2">
+        {/* 업로드된 이미지 카드들 */}
+        {previews.map((src, i) => (
+          <div key={i} className="relative flex-shrink-0 w-48 h-44 bg-white border-[1.5px] border-[#D9EEF2] rounded-[32px] p-3 shadow-sm group animate-in zoom-in-95 duration-300">
+            <div className="w-full h-full rounded-[24px] overflow-hidden bg-[#F9FEFF]">
+              <img src={src} alt="preview" className="w-full h-full object-contain" />
+            </div>
+            {/* 삭제 버튼 (우측 상단) */}
+            <button
+              onClick={() => removeFile(i)}
+              className="absolute -top-2 -right-2 bg-white border border-[#E0E0E0] text-[#999999] rounded-full p-1.5 shadow-md hover:bg-red-50 hover:text-red-500 transition-all"
+            >
+              <X size={18} strokeWidth={3} />
+            </button>
+          </div>
+        ))}
+
+        {/* ➕ 추가 업로드 박스 (4개 미만일 때만 보임, 항상 우측 끝 배치) */}
+        {files.length < 4 && (
+          <div
+            onClick={() => fileInputRef.current?.click()}
+            className="flex-shrink-0 w-48 h-44 border-2 border-dashed border-[#D9EEF2] rounded-[32px] flex flex-col items-center justify-center cursor-pointer hover:bg-[#F0F9FB] transition-all bg-white group"
+          >
+            <div className="w-10 h-10 bg-[#F2F8F9] rounded-lg flex items-center justify-center mb-3 group-hover:bg-white transition-colors">
+               <img src="/images/file.svg" alt="icon" className="w-5 h-5 opacity-40" 
+                    onError={(e) => (e.currentTarget.src = "https://www.svgrepo.com/show/485545/image-square.svg")} />
+            </div>
+            <p className="text-[15px] text-[#888888] font-bold text-center leading-tight">
+              여기를 터치해 주세요
+            </p>
+            <input type="file" ref={fileInputRef} className="hidden" multiple accept="image/*" onChange={handleFileChange} />
+          </div>
+        )}
+      </div>
+
+      {/* 하단 안내 문구 */}
+      <div className="space-y-3 mb-16 text-left w-full max-w-md">
+        <div className="flex items-center gap-3">
+          <span className="text-[#5C9DFF] text-xl font-bold">✓</span>
+          <p className="text-[19px] font-bold text-[#666666]">최근의 그림일수록 지금의 마음이 더 잘 보여요.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-[#5C9DFF] text-xl font-bold">✓</span>
+          <p className="text-[19px] font-bold text-[#666666]">1장부터 4장까지 고를 수 있어요.</p>
+        </div>
+      </div>
+
+      {/* 🔵 활성화/비활성화 다음 버튼 */}
+      <button
+        onClick={onNext}
+        disabled={files.length === 0}
+        className={`px-32 py-5 rounded-[22px] font-black text-[24px] transition-all shadow-lg ${
+          files.length > 0
+            ? "bg-[#5C9DFF] text-white hover:bg-[#4A8DFF] active:scale-95 shadow-[0_10px_20px_rgba(92,157,255,0.3)]"
+            : "bg-[#EEEEEE] text-[#BBBBBB] cursor-not-allowed"
+        }`}
+      >
+        다음
+      </button>
+    </div>
+  );
+}
+==================== END: frontend/src/components/ImageUploader.tsx ====================
+
+
+==================== START: frontend/src/components/AnalysisResult.tsx ====================
+"use client";
+import React, { useEffect, useState } from "react";
+import { AnalysisResponse } from "../lib/api";
+import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, Radar as RadarFill } from 'recharts';
+
+interface Props {
+  data: AnalysisResponse;
+  persona: string;
+  files: File[];
+  onReset: () => void;
+}
+
+// 키워드 아이템 타입 (단어, 색상, 크기 정보를 묶음)
+interface KeywordItem {
+  word: string;
+  color: string;
+  sizeClass: string;
+  originalIndex: number; // 키 값용
+}
+
+export default function AnalysisResult({ data, persona, files, onReset }: Props) {
+  const { analysis_result, commentary_sections } = data;
+  const [previews, setPreviews] = useState<string[]>([]);
+  
+  // 랜덤으로 섞인 키워드 아이템들을 저장할 상태
+  const [shuffledKeywords, setShuffledKeywords] = useState<KeywordItem[]>([]);
+
+  useEffect(() => {
+    const urls = files.map((file) => URL.createObjectURL(file));
+    setPreviews(urls);
+    return () => urls.forEach((url) => URL.revokeObjectURL(url));
+  }, [files]);
+
+  // 💡 [핵심 로직] 키워드 데이터를 생성한 후 '위치'를 랜덤으로 섞음
+  useEffect(() => {
+    // 1. 순위별 폰트 크기 정의 (1순위가 가장 큼) - 데이터와 묶임
+    const sizeClasses = [
+      "text-[72px] font-black", // 1순위
+      "text-[56px] font-black", // 2순위
+      "text-[48px] font-bold",  // 3순위
+      "text-[40px] font-bold",  // 4순위
+      "text-[32px] font-bold"   // 5순위
+    ];
+
+    // 2. 데이터 번들링: 단어 + 색상 + 크기를 하나의 객체로 묶음 (1:1 매핑 유지)
+    const keywords: KeywordItem[] = analysis_result.word_cloud.map((word, i) => ({
+      word: word,
+      color: analysis_result.top_5_colors[i],
+      sizeClass: sizeClasses[i] || "text-[24px]",
+      originalIndex: i
+    }));
+
+    // 3. 배열 순서를 랜덤으로 섞음 (이것이 줄 배치를 결정함)
+    const shuffled = [...keywords].sort(() => Math.random() - 0.5);
+    setShuffledKeywords(shuffled);
+  }, [analysis_result]);
+
+  const personaThemes: { [key: string]: any } = {
+    "마음박사 페페": { 
+      main: "#E91E63", highlight: "#F8BBD0", key: "pepe",
+      subTitle: "그림을 따뜻하게 이해해 주는 마음 박사 페페의"
+    },
+    "현실친구 라봉이": { 
+      main: "#FF9800", highlight: "#FFE0B2", key: "labong",
+      subTitle: "할 말은 하지만, 애정을 놓치지 않는 현실친구 라봉이의"
+    },
+    "칭찬봇 피코": { 
+      main: "#4CAF50", highlight: "#C8E6C9", key: "pico",
+      subTitle: "그림을 스캔해서 무한 칭찬 쏟아내는 칭찬봇 피코의"
+    },
+    "카리스마 샤샤": { 
+      main: "#03A9F4", highlight: "#B3E5FC", key: "shasha",
+      subTitle: "쿨 하지만 속마음은 응원 가득한 카리스마 샤샤의"
+    },
+  };
+
+  const theme = personaThemes[persona] || personaThemes["마음박사 페페"];
+  const commonTextStyle = "text-[24px] leading-[1.8] font-bold text-[#333] whitespace-pre-line";
+
+  const highlightStyle = {
+    background: `linear-gradient(to top, ${theme.highlight} 50%, transparent 50%)`,
+    padding: '0 4px',
+    display: 'inline'
+  };
+
+  const chartData = [
+    { subject: '즐거움', A: analysis_result.energy_chart.joyful, icon: '🌈', desc: '밝고 활발한 표현으로\n활기찬 느낌이에요.' },
+    { subject: '궁금증', A: analysis_result.energy_chart.curious, icon: '🔍', desc: '새로운 장면에 등장해\n더 궁금해지는 느낌이에요.' },
+    { subject: '반짝임', A: analysis_result.energy_chart.sparkle, icon: '✨', desc: '눈에 띄는 색과 장식으로\n반짝이는 것에 집중되고 있어요.' },
+    { subject: '휴식', A: analysis_result.energy_chart.rest, icon: '🍃', desc: '편안한 장면이 많아서\n조용히 쉬는 차분한 느낌이에요.' },
+    { subject: '멍때림', A: analysis_result.energy_chart.spacing_out, icon: '🫧', desc: '빈 공간과 여운이 많아서\n가만히 있고 싶은 느낌이에요.' },
+  ];
+
+  const renderCustomTick = ({ payload, x, y, textAnchor, stroke, radius }: any) => {
+    const data = chartData.find(d => d.subject === payload.value);
+    if (!data) return null;
+    return (
+      <g className="recharts-layer recharts-polar-angle-axis-tick">
+        <text x={x} y={y} dy={-20} textAnchor={textAnchor} fill="#333" style={{ fontSize: '22px', fontWeight: '800', fontFamily: 'sans-serif' }}>
+          {data.subject} {data.icon}
+        </text>
+        <text x={x} y={y} textAnchor={textAnchor} fill="#888" style={{ fontSize: '14px', fontWeight: '600', lineHeight: '1.2' }}>
+          {data.desc.split('\n').map((line, i) => (
+            <tspan x={x} dy={i === 0 ? 10 : 18} key={i}>{line}</tspan>
+          ))}
+        </text>
+      </g>
+    );
+  };
+
+  // 💡 [레이아웃] 5개 줄(Row)의 고정 정렬 스타일 정의
+  const getRowAlignment = (index: number) => {
+    switch(index) {
+        case 0: return "justify-start"; // 1번째 줄: 맨 왼쪽
+        case 1: return "justify-end";   // 2번째 줄: 맨 오른쪽
+        case 2: return "justify-center"; // 3번째 줄: 가운데
+        case 3: return "justify-start pl-[15%]"; // 4번째 줄: 왼쪽과 중간 사이
+        case 4: return "justify-end pr-[15%]";   // 5번째 줄: 오른쪽과 중간 사이
+        default: return "justify-start";
+    }
+  }
+
+  return (
+    <div className="w-full max-w-[1100px] mx-auto space-y-16 pb-24 font-sans animate-in fade-in duration-1000">
+      
+      {/* 1. 상단 타이틀 & 캐릭터 & 고정 인사 */}
+      <section className="flex flex-col items-center pt-4 relative">
+        <div className="text-center mb-4 relative z-20">
+          <p className="text-[20px] font-bold text-[#666] mb-2">{theme.subTitle}</p>
+          <h1 className="text-[52px] font-black text-[#111] tracking-tight text-center">마음 분석 결과</h1>
+        </div>
+        <div className="w-full flex justify-center items-end relative z-0">
+          <div className="relative">
+            <img src={`/images/${theme.key}_half.png`} alt={persona} className="w-[420px] h-auto object-contain animate-in fade-in slide-in-from-bottom-4 duration-1000 z-10 relative" />
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" className="absolute top-10 -left-10 z-0"><path d="M12 0L14.59 9.41L24 12L14.59 14.59L12 24L9.41 14.59L0 12L9.41 9.41L12 0Z" fill={theme.main} /></svg>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" className="absolute top-1/3 -right-12 z-0"><path d="M12 0L14.59 9.41L24 12L14.59 14.59L12 24L9.41 14.59L0 12L9.41 9.41L12 0Z" fill={theme.highlight} /></svg>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="absolute bottom-20 -right-6 z-20 opacity-70"><path d="M12 0L14.59 9.41L24 12L14.59 14.59L12 24L9.41 14.59L0 12L9.41 9.41L12 0Z" fill={theme.main} /></svg>
+          </div>
+        </div>
+        <div className="w-full bg-white rounded-[40px] p-14 shadow-2xl relative z-10 -mt-16">
+           <div className={`${commonTextStyle} text-center`}>{commentary_sections[0]?.content}</div>
+        </div>
+      </section>
+
+      {/* 2. 그림 섹션 */}
+      <section className="bg-white rounded-[40px] p-12 shadow-sm border border-white/30">
+        <h3 className="text-center mb-10"><span className="text-[30px] font-black" style={highlightStyle}>그림</span></h3>
+        <div className="flex flex-wrap justify-center gap-4"> 
+          {previews.map((src, i) => (
+            <div key={i} className="w-[230px] h-[230px] rounded-[32px] overflow-hidden border-2 border-[#f0f0f0] bg-[#fafafa] shadow-inner flex-shrink-0">
+              <img src={src} className="w-full h-full object-cover" alt="drawing" />
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* 3. 마음 키워드 섹션 (💡 5줄 레이아웃 + 랜덤 배치 적용) */}
+      <section className="bg-white rounded-[40px] p-16 shadow-sm border border-white/30 text-center">
+        <h3 className="mb-14"><span className="text-[30px] font-black" style={highlightStyle}>마음 키워드</span></h3>
+        
+        {/* 키워드 5줄 컨테이너 */}
+        <div className="w-full max-w-[850px] mx-auto flex flex-col gap-y-8 mb-12 py-4">
+          {shuffledKeywords.map((item, index) => (
+            // 💡 index(줄 번호)는 고정된 레이아웃 규칙을 따름 (getRowAlignment 사용)
+            // 💡 item(내용)은 랜덤으로 섞여서 들어옴
+            <div key={item.originalIndex} className={`w-full flex items-center ${getRowAlignment(index)} animate-in fade-in slide-in-from-bottom-2 duration-700`}>
+              <span 
+                className={`${item.sizeClass} tracking-tighter transition-all duration-500 hover:scale-105 cursor-default leading-none drop-shadow-sm`} 
+                style={{ color: item.color }}
+              >
+                #{item.word}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* 캐릭터 멘트 */}
+        <div className={`${commonTextStyle} px-10`}>
+          {commentary_sections[1]?.content}
+        </div>
+      </section>
+
+      {/* 4. 마음 에너지 섹션 */}
+      <section className="bg-white rounded-[40px] p-16 shadow-sm border border-white/30 text-center">
+        <h3 className="mb-14"><span className="text-[30px] font-black" style={highlightStyle}>마음 에너지</span></h3>
+        <div className="h-[650px] w-full mb-10 -mt-10"> 
+          <ResponsiveContainer width="100%" height="100%">
+            <RadarChart cx="50%" cy="50%" outerRadius="60%" data={chartData}>
+              <PolarGrid stroke="#ddd" />
+              <PolarAngleAxis dataKey="subject" tick={renderCustomTick} />
+              <RadarFill name="Energy" dataKey="A" stroke={theme.main} fill={theme.main} fillOpacity={0.3} />
+            </RadarChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="space-y-12">
+          <p className="font-black text-gray-900 text-[28px]">{analysis_result.persona_energy_sentence}</p>
+          <div className="h-[2px] w-16 bg-gray-100 mx-auto"></div>
+          <p className={`${commonTextStyle} px-10 text-center`}>{commentary_sections[2]?.content}</p>
+        </div>
+      </section>
+
+      {/* 5. 그림 솔루션 섹션 */}
+      <section className="bg-white rounded-[40px] p-16 shadow-sm border border-white/30 relative overflow-hidden">
+        <h3 className="text-center mb-8"><span className="text-[30px] font-black" style={highlightStyle}>그림 솔루션</span></h3>
+        <p className="text-center font-black mb-16 text-[24px] leading-relaxed px-10" style={{ color: theme.main }}>
+          그림 솔루션은 지금의 마음을 환기해 새롭게 바꿔보거나, <br/>좋은 감정을 더 확장해서 이어가 보는 그림 활동 가이드예요.
+        </p>
+        <div className="flex flex-col md:flex-row gap-12 items-start mb-20">
+          <div className="flex-1 space-y-16">
+            {commentary_sections.slice(3).map((section, idx) => (
+              <div key={idx} className={`${commonTextStyle} border-b border-dashed border-gray-100 pb-12 last:border-0`}>{section.content}</div>
+            ))}
+          </div>
+          <div className="w-[340px] flex-shrink-0 self-end pt-10 relative">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" className="absolute top-10 -left-4 animate-pulse">
+              <path d="M12 0L14.59 9.41L24 12L14.59 14.59L12 24L9.41 14.59L0 12L9.41 9.41L12 0Z" fill={theme.highlight} />
+            </svg>
+            <img src={`/images/${theme.key}_side.png`} alt="side char" className="w-full h-auto object-contain" />
+          </div>
+        </div>
+        <div className="mt-16 bg-[#FBFBFB] rounded-[36px] p-14 border-l-[14px] border-amber-300 text-left shadow-inner">
+           <h4 className="text-amber-600 font-black text-[26px] mb-8">⚠️ 결과가 생각한 것과 다른가요?</h4>
+           <ul className="space-y-6 text-[22px] text-[#666] font-bold list-disc ml-10 leading-relaxed">
+             <li>같은 그림이라도 바라보는 마음에 따라 달라질 수 있어요.</li>
+             <li>분석 결과는 정답이 아니라, 마음을 가볍고 즐겁게 이해하기 위한 작은 힌트예요.</li>
+             <li>앞으로 나의 마음을 소중히 아끼고 돌보며, 더 즐겁게 자라나는 어린이가 되길 응원 할게요!</li>
+           </ul>
+        </div>
+      </section>
+
+      {/* 확인 버튼 */}
+      <div className="flex justify-center pt-10 pb-20">
+        <button onClick={onReset} className="bg-[#5C9DFF] text-white px-48 py-9 rounded-[32px] font-black text-[36px] hover:bg-[#4A8DFF] transition-all shadow-2xl active:scale-95">확인</button>
+      </div>
+    </div>
+  );
+}
+==================== END: frontend/src/components/AnalysisResult.tsx ====================
+
+
+==================== START: frontend/src/components/PersonaSelector.tsx ====================
+"use client";
+import React from "react";
+
+interface Props {
+  persona: string | null;
+  setPersona: (p: string) => void;
+}
+
+export default function PersonaSelector({ persona, setPersona }: Props) {
+  const options = [
+    { 
+      name: "마음박사 페페", 
+      img: "/images/pepe_front.png", 
+      desc: "따뜻하고 다정하게\n박사님 스타일의 마음 읽기",
+      bgColor: "bg-[#E91E63]" // 기획안 레드
+    },
+    { 
+      name: "현실친구 라봉이", 
+      img: "/images/labong_front.png", 
+      desc: "솔직하지만 애정있는\n찐한 친구 스타일의 마음 읽기",
+      bgColor: "bg-[#FF9800]" // 기획안 오렌지
+    },
+    { 
+      name: "칭찬봇 피코", 
+      img: "/images/pico_front.png", 
+      desc: "완벽하게 스캔하는\n로봇 스타일의 마음 읽기",
+      bgColor: "bg-[#4CAF50]" // 기획안 그린
+    },
+    { 
+      name: "카리스마 샤샤", 
+      img: "/images/shasha_front.png", 
+      desc: "쿨 하고 센스 있는\n사나이 스타일의 마음 읽기",
+      bgColor: "bg-[#03A9F4]" // 기획안 블루
+    },
+  ];
+
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 w-full">
+      {options.map((opt) => (
+        <button
+          key={opt.name}
+          onClick={() => setPersona(opt.name)}
+          className={`relative p-6 rounded-[32px] transition-all duration-300 flex flex-col items-center min-h-[360px] shadow-sm ${
+            persona === opt.name
+              ? `${opt.bgColor} text-white scale-105 z-10 shadow-xl`
+              : "bg-white text-gray-800 border-2 border-gray-100 hover:border-gray-200"
+          }`}
+        >
+          <div className={`text-[22px] font-black mb-6 ${persona === opt.name ? "text-white" : "text-gray-900"}`}>{opt.name}</div>
+          <div className="flex-1 flex items-center justify-center mb-6">
+            <img src={opt.img} alt={opt.name} className="w-full max-w-[140px] object-contain" />
+          </div>
+          <div className={`text-[14px] leading-relaxed font-bold text-center whitespace-pre-line opacity-90 ${persona === opt.name ? "text-white" : "text-gray-400"}`}>{opt.desc}</div>
+          {persona === opt.name && (
+            <div className="absolute top-4 right-4 text-white">
+              <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center font-black">✓</div>
+            </div>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+==================== END: frontend/src/components/PersonaSelector.tsx ====================
+
