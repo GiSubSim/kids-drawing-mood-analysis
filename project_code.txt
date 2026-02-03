@@ -369,10 +369,10 @@ JSON 출력에 포함될 **UI 표시용 특수 문장 2가지**(`persona_mind_se
 - **[라봉]:** "그림으로 본 요즘 너의 마음은 [ {무드키워드} ] 이야!"
 
 ### 2. 에너지 분석 문장 (`persona_energy_sentence`)
-- **[페페]:** "요즘 마음 에너지는 즐거움 {joyful}%, 궁금증 {curious}%, 멍때림 {spacing_out}%, 반짝임 {sparkle}%, 휴식 {rest}% 이에요.\\n에너지 숫자가 클수록 그 마음이 그림에 더 많이 담겨 있다는 의미예요."
-- **[샤샤]:** "요즘 마음 에너지는 즐거움 {joyful}%, 궁금증 {curious}%, 멍때림 {spacing_out}%, 반짝임 {sparkle}%, 휴식 {rest}% 이야!\\n에너지 숫자가 클수록 그 마음이 그림에 더 많이 담겨 있다는 의미!"
-- **[피코]:** "요즘 마음 에너지는 즐거움 {joyful}%, 궁금증 {curious}%, 멍때림 {spacing_out}%, 반짝임 {sparkle}%, 휴식 {rest}% 입.니.다.\\n에너지 숫자가 클수록 그 마음이 그림에 더 많이 담겨 있다는 의미 입니다."
-- **[라봉]:** "요즘 마음 에너지는 즐거움 {joyful}%, 궁금증 {curious}%, 멍때림 {spacing_out}%, 반짝임 {sparkle}%, 휴식 {rest}% 이야!\\n에너지 숫자가 클수록 그 마음이 그림에 더 많이 담겨 있다는 의미!"
+- **[페페]:** "마음 에너지는 즐거움 {joyful}%, 궁금증 {curious}%, 멍때림 {spacing_out}%, 반짝임 {sparkle}%, 휴식 {rest}% 이에요.\\n에너지 숫자가 클수록 그 마음이 그림에 더 많이 담겨 있다는 의미예요."
+- **[샤샤]:** "마음 에너지는 즐거움 {joyful}%, 궁금증 {curious}%, 멍때림 {spacing_out}%, 반짝임 {sparkle}%, 휴식 {rest}% 이야!\\n에너지 숫자가 클수록 그 마음이 그림에 더 많이 담겨 있다는 의미!"
+- **[피코]:** "마음 에너지는 즐거움 {joyful}%, 궁금증 {curious}%, 멍때림 {spacing_out}%, 반짝임 {sparkle}%, 휴식 {rest}% 입.니.다.\\n에너지 숫자가 클수록 그 마음이 그림에 더 많이 담겨 있다는 의미 입니다."
+- **[라봉]:** "마음 에너지는 즐거움 {joyful}%, 궁금증 {curious}%, 멍때림 {spacing_out}%, 반짝임 {sparkle}%, 휴식 {rest}% 이야!\\n에너지 숫자가 클수록 그 마음이 그림에 더 많이 담겨 있다는 의미!"
 
 ---
 
@@ -981,10 +981,9 @@ export default function Home() {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   
-  /* 1. 기본 폰트(sans)를 layout.tsx에서 정의한 변수(--font-pretendard)로 연결 */
+  /* 💡 layout.tsx에서 정의한 로컬 폰트 변수(--font-pretendard)를 Tailwind에 연결 */
   --font-sans: var(--font-pretendard), -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
   
-  /* 모노스페이스 폰트도 필요하다면 동일하게 설정하거나 유지 */
   --font-mono: monospace;
 }
 
@@ -998,7 +997,7 @@ export default function Home() {
 body {
   background: var(--background);
   color: var(--foreground);
-  /* 2. 폰트 적용 */
+  /* 기본 폰트 적용 */
   font-family: var(--font-sans);
 }
 ==================== END: frontend/src/app/globals.css ====================
@@ -1006,15 +1005,15 @@ body {
 
 ==================== START: frontend/src/app/layout.tsx ====================
 import type { Metadata } from "next";
-import localFont from "next/font/local"; // 1. localFont 임포트
+import localFont from "next/font/local";
 import "./globals.css";
 
-// 2. 로컬 폰트 설정 (src 경로는 layout.tsx 기준 상대 경로)
+// 💡 로컬 폰트 설정 (파일 경로: src/app/fonts/PretendardVariable.woff2)
 const pretendard = localFont({
   src: "./fonts/PretendardVariable.woff2",
   display: "swap",
-  weight: "45 920", // Variable 폰트의 웨이트 범위
-  variable: "--font-pretendard", // CSS 변수명 설정
+  weight: "45 920", // 가변 폰트 웨이트 설정
+  variable: "--font-pretendard", // globals.css에서 사용할 변수명
 });
 
 export const metadata: Metadata = {
@@ -1029,7 +1028,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ko">
-      {/* 3. body 태그에 폰트 변수 적용 */}
+      {/* 💡 body 태그에 폰트 변수를 주입하여 전역에서 사용 가능하게 함 */}
       <body className={`${pretendard.variable} antialiased`}>
         {children}
       </body>
@@ -1225,19 +1224,17 @@ interface Props {
   onReset: () => void;
 }
 
-// 키워드 아이템 타입 (단어, 색상, 크기 정보를 묶음)
+// 키워드 아이템 타입
 interface KeywordItem {
   word: string;
   color: string;
   sizeClass: string;
-  originalIndex: number; // 키 값용
+  originalIndex: number;
 }
 
 export default function AnalysisResult({ data, persona, files, onReset }: Props) {
   const { analysis_result, commentary_sections } = data;
   const [previews, setPreviews] = useState<string[]>([]);
-  
-  // 랜덤으로 섞인 키워드 아이템들을 저장할 상태
   const [shuffledKeywords, setShuffledKeywords] = useState<KeywordItem[]>([]);
 
   useEffect(() => {
@@ -1246,18 +1243,15 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
     return () => urls.forEach((url) => URL.revokeObjectURL(url));
   }, [files]);
 
-  // 💡 [핵심 로직] 키워드 데이터를 생성한 후 '위치'를 랜덤으로 섞음
   useEffect(() => {
-    // 1. 순위별 폰트 크기 정의 (1순위가 가장 큼) - 데이터와 묶임
     const sizeClasses = [
-      "text-[72px] font-black", // 1순위
-      "text-[56px] font-black", // 2순위
-      "text-[48px] font-bold",  // 3순위
-      "text-[40px] font-bold",  // 4순위
-      "text-[32px] font-bold"   // 5순위
+      "text-[72px] font-black", 
+      "text-[56px] font-black", 
+      "text-[48px] font-bold",  
+      "text-[40px] font-bold",  
+      "text-[32px] font-bold"   
     ];
 
-    // 2. 데이터 번들링: 단어 + 색상 + 크기를 하나의 객체로 묶음 (1:1 매핑 유지)
     const keywords: KeywordItem[] = analysis_result.word_cloud.map((word, i) => ({
       word: word,
       color: analysis_result.top_5_colors[i],
@@ -1265,7 +1259,6 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
       originalIndex: i
     }));
 
-    // 3. 배열 순서를 랜덤으로 섞음 (이것이 줄 배치를 결정함)
     const shuffled = [...keywords].sort(() => Math.random() - 0.5);
     setShuffledKeywords(shuffled);
   }, [analysis_result]);
@@ -1290,7 +1283,9 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
   };
 
   const theme = personaThemes[persona] || personaThemes["마음박사 페페"];
-  const commonTextStyle = "text-[24px] leading-[1.8] font-bold text-[#333] whitespace-pre-line";
+  
+  // 💡 [핵심] 공통 텍스트 스타일 (폰트 크기 24px)
+  const commonTextStyle = "text-[24px] leading-[1.8] font-bold text-[#333] whitespace-pre-line break-keep";
 
   const highlightStyle = {
     background: `linear-gradient(to top, ${theme.highlight} 50%, transparent 50%)`,
@@ -1309,36 +1304,95 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
   const renderCustomTick = ({ payload, x, y, textAnchor, stroke, radius }: any) => {
     const data = chartData.find(d => d.subject === payload.value);
     if (!data) return null;
+
+    let dx = 0;
+    let dy = 0;
+
+    switch (data.subject) {
+      case '즐거움':
+        dy = -27; 
+        break;
+      case '궁금증':
+        dx = 10;  
+        dy = 0;
+        break;
+      case '반짝임':
+        dx = 10;  
+        dy = 40;  
+        break;
+      case '휴식':
+        dx = 0;
+        dy = 40;  
+        break;
+      case '멍때림':
+        dx = -10; 
+        dy = 0;
+        break;
+      default:
+        break;
+    }
+
     return (
       <g className="recharts-layer recharts-polar-angle-axis-tick">
-        <text x={x} y={y} dy={-20} textAnchor={textAnchor} fill="#333" style={{ fontSize: '22px', fontWeight: '800', fontFamily: 'sans-serif' }}>
+        <text 
+          x={x + dx} 
+          y={y + dy} 
+          dy={-15} 
+          textAnchor={textAnchor} 
+          fill="#333" 
+          style={{ fontSize: '22px', fontWeight: '800', fontFamily: 'var(--font-pretendard)' }}
+        >
           {data.subject} {data.icon}
         </text>
-        <text x={x} y={y} textAnchor={textAnchor} fill="#888" style={{ fontSize: '14px', fontWeight: '600', lineHeight: '1.2' }}>
+        <text 
+          x={x + dx} 
+          y={y + dy} 
+          textAnchor={textAnchor} 
+          fill="#888" 
+          style={{ fontSize: '14px', fontWeight: '600', lineHeight: '1.2', fontFamily: 'var(--font-pretendard)' }}
+        >
           {data.desc.split('\n').map((line, i) => (
-            <tspan x={x} dy={i === 0 ? 10 : 18} key={i}>{line}</tspan>
+            <tspan x={x + dx} dy={i === 0 ? 10 : 18} key={i}>{line}</tspan>
           ))}
         </text>
       </g>
     );
   };
 
-  // 💡 [레이아웃] 5개 줄(Row)의 고정 정렬 스타일 정의
   const getRowAlignment = (index: number) => {
     switch(index) {
-        case 0: return "justify-start"; // 1번째 줄: 맨 왼쪽
-        case 1: return "justify-end";   // 2번째 줄: 맨 오른쪽
-        case 2: return "justify-center"; // 3번째 줄: 가운데
-        case 3: return "justify-start pl-[15%]"; // 4번째 줄: 왼쪽과 중간 사이
-        case 4: return "justify-end pr-[15%]";   // 5번째 줄: 오른쪽과 중간 사이
+        case 0: return "justify-start"; 
+        case 1: return "justify-end";   
+        case 2: return "justify-center"; 
+        case 3: return "justify-start pl-[15%]"; 
+        case 4: return "justify-end pr-[15%]";   
         default: return "justify-start";
     }
   }
 
+  // 💡 [수정됨] .0 제거 및 텍스트 포맷팅
+  const formatEnergyText = (text: string) => {
+    if (!text) return "";
+    
+    // 1. .0% -> % 로 변환 (소수점 제거)
+    let cleanText = text.replace(/\.0%/g, "%");
+
+    // 2. "단어 숫자%" 패턴 찾기
+    const regex = /([가-힣]+\s\d+(?:[\.]\d+)?%)/g;
+    
+    return cleanText.split(regex).map((part, i) => {
+      // 숫자 데이터(예: 즐거움 85%)는 아주 굵고 검게 강조
+      if (regex.test(part)) {
+         return <span key={i} className="font-black text-black">{part}</span>;
+      }
+      return <span key={i}>{part}</span>;
+    });
+  };
+
   return (
     <div className="w-full max-w-[1100px] mx-auto space-y-16 pb-24 font-sans animate-in fade-in duration-1000">
       
-      {/* 1. 상단 타이틀 & 캐릭터 & 고정 인사 */}
+      {/* 1. 상단 타이틀 & 캐릭터 */}
       <section className="flex flex-col items-center pt-4 relative">
         <div className="text-center mb-4 relative z-20">
           <p className="text-[20px] font-bold text-[#666] mb-2">{theme.subTitle}</p>
@@ -1369,15 +1423,11 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
         </div>
       </section>
 
-      {/* 3. 마음 키워드 섹션 (💡 5줄 레이아웃 + 랜덤 배치 적용) */}
+      {/* 3. 마음 키워드 섹션 */}
       <section className="bg-white rounded-[40px] p-16 shadow-sm border border-white/30 text-center">
         <h3 className="mb-14"><span className="text-[30px] font-black" style={highlightStyle}>마음 키워드</span></h3>
-        
-        {/* 키워드 5줄 컨테이너 */}
         <div className="w-full max-w-[850px] mx-auto flex flex-col gap-y-8 mb-12 py-4">
           {shuffledKeywords.map((item, index) => (
-            // 💡 index(줄 번호)는 고정된 레이아웃 규칙을 따름 (getRowAlignment 사용)
-            // 💡 item(내용)은 랜덤으로 섞여서 들어옴
             <div key={item.originalIndex} className={`w-full flex items-center ${getRowAlignment(index)} animate-in fade-in slide-in-from-bottom-2 duration-700`}>
               <span 
                 className={`${item.sizeClass} tracking-tighter transition-all duration-500 hover:scale-105 cursor-default leading-none drop-shadow-sm`} 
@@ -1388,8 +1438,6 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
             </div>
           ))}
         </div>
-
-        {/* 캐릭터 멘트 */}
         <div className={`${commonTextStyle} px-10`}>
           {commentary_sections[1]?.content}
         </div>
@@ -1408,22 +1456,39 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
           </ResponsiveContainer>
         </div>
         <div className="space-y-12">
-          <p className="font-black text-gray-900 text-[28px]">{analysis_result.persona_energy_sentence}</p>
+          
+          {/* 💡 [수정] max-w-[7000px] 및 mx-auto 추가하여 아래 텍스트와 너비 동일하게 제한 */}
+          <div className="flex justify-center">
+            <p className={`${commonTextStyle} text-center max-w-[700px] px-4`}>
+              {formatEnergyText(analysis_result.persona_energy_sentence)}
+            </p>
+          </div>
+          
           <div className="h-[2px] w-16 bg-gray-100 mx-auto"></div>
-          <p className={`${commonTextStyle} px-10 text-center`}>{commentary_sections[2]?.content}</p>
+          
+          {/* 아래 설명글 */}
+          <div className="flex justify-center">
+            <p className={`${commonTextStyle} text-center max-w-[850px] px-4`}>
+              {commentary_sections[2]?.content}
+            </p>
+          </div>
         </div>
       </section>
 
       {/* 5. 그림 솔루션 섹션 */}
       <section className="bg-white rounded-[40px] p-16 shadow-sm border border-white/30 relative overflow-hidden">
         <h3 className="text-center mb-8"><span className="text-[30px] font-black" style={highlightStyle}>그림 솔루션</span></h3>
-        <p className="text-center font-black mb-16 text-[24px] leading-relaxed px-10" style={{ color: theme.main }}>
+        
+        <p className="text-center mb-16 text-[24px] leading-relaxed px-10" style={{ color: theme.highlight }}>
           그림 솔루션은 지금의 마음을 환기해 새롭게 바꿔보거나, <br/>좋은 감정을 더 확장해서 이어가 보는 그림 활동 가이드예요.
         </p>
+
         <div className="flex flex-col md:flex-row gap-12 items-start mb-20">
           <div className="flex-1 space-y-16">
             {commentary_sections.slice(3).map((section, idx) => (
-              <div key={idx} className={`${commonTextStyle} border-b border-dashed border-gray-100 pb-12 last:border-0`}>{section.content}</div>
+              <div key={idx} className={`${commonTextStyle}`}>
+                {section.content}
+              </div>
             ))}
           </div>
           <div className="w-[340px] flex-shrink-0 self-end pt-10 relative">

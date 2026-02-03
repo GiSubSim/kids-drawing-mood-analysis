@@ -19,4 +19,8 @@ backend/.env.local
 
 # 데이터베이스 파일 (선택사항: DB 데이터도 옮기고 싶으면 이 줄을 지우세요)
 *.db
-*.sqlite3
+*.sqlite3.venv
+backend/.venv
+frontend/node_modules
+__pycache__
+.env

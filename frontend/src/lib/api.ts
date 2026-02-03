@@ -50,14 +50,25 @@ export const analyzeImage = async (files: File[], persona: string) => {
   // 3. 페르소나 정보 추가
   formData.append("persona", persona);
 
-  // 4. Axios를 사용하여 POST 요청 전송
-  // <AnalysisResponse>를 적어주면 반환값이 어떤 형태인지 자동완성 지원됨
+
+  // 4. Axios를 사용하여 POST 요청 전송(Render 백엔드 배포용 + 값 없으면 자동 local 개발용 주소 사용하도록 셋팅됨)
+  // [수정됨] 환경 변수에서 백엔드 주소를 가져오도록 변경
+  // 값이 없으면 로컬 개발용 주소를 사용
+  const backendUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
   const response = await axios.post<AnalysisResponse>(
-    "http://localhost:8000/api/analyze", // 백엔드 주소
+    `${backendUrl}/api/analyze`, // 주소 뒤에 엔드포인트 붙임
     formData
-    // 주의: 여기서 'Content-Type': 'multipart/form-data' 헤더를 직접 설정하지 마세요.
-    // Axios와 브라우저가 FormData를 감지하면 자동으로 적절한 헤더를 생성해줍니다.
   );
+
+  // // 4. Axios를 사용하여 POST 요청 전송(기본 로컬 개발용 주소로 사용하는 셋팅)
+  // // <AnalysisResponse>를 적어주면 반환값이 어떤 형태인지 자동완성 지원됨
+  // const response = await axios.post<AnalysisResponse>(
+  //   "http://localhost:8000/api/analyze", // 백엔드 주소
+  //   formData
+  //   // 주의: 여기서 'Content-Type': 'multipart/form-data' 헤더를 직접 설정하지 마세요.
+  //   // Axios와 브라우저가 FormData를 감지하면 자동으로 적절한 헤더를 생성해줍니다.
+  // );
 
   // 5. 실제 데이터만 추출하여 반환
   return response.data;
