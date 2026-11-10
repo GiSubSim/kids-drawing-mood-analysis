@@ -18,6 +18,39 @@ interface KeywordItem {
   originalIndex: number;
 }
 
+// 그림에서 뽑은 색이 흰 카드에서 안 보일 만큼 밝으면 같은 색조로 어둡게 바꾼다 (명암비 3:1 기준)
+function readableOnWhite(color: string): string {
+  const value = (color ?? "").trim();
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value);
+  const rgb = /^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i.exec(value);
+  let channels: number[];
+  if (hex) {
+    const full = hex[1].length === 3 ? [...hex[1]].map((c) => c + c).join("") : hex[1];
+    channels = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+  } else if (rgb) {
+    channels = rgb.slice(1, 4).map(Number);
+  } else {
+    return color;
+  }
+
+  const luminance = (c: number[]) => {
+    const [r, g, b] = c.map((v) => {
+      const s = v / 255;
+      return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+
+  if (luminance(channels) <= 0.3) return color;
+  let scale = 1;
+  let darker = channels;
+  while (luminance(darker) > 0.3) {
+    scale -= 0.02;
+    darker = channels.map((v) => Math.round(v * scale));
+  }
+  return `rgb(${darker.join(", ")})`;
+}
+
 export default function AnalysisResult({ data, persona, files, onReset }: Props) {
   const { analysis_result, commentary_sections } = data;
   const [previews, setPreviews] = useState<string[]>([]);
@@ -58,7 +91,7 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
 
     const keywords: KeywordItem[] = analysis_result.word_cloud.map((word, i) => ({
       word: word,
-      color: analysis_result.top_5_colors[i],
+      color: readableOnWhite(analysis_result.top_5_colors[i]),
       sizeClass: sizeClasses[i] || "text-[16px] wide:text-[24px]",
       originalIndex: i
     }));
@@ -284,7 +317,7 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
       <section className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-white/30 wide:rounded-[40px] wide:p-16 relative overflow-hidden">
         <h3 className="text-center mb-2 wide:mb-8"><span className="text-[19px] font-bold wide:text-[30px] wide:font-black" style={highlightStyle}>그림 솔루션</span></h3>
         
-        <p className="text-center mb-5 text-[14px] leading-relaxed wide:mb-16 wide:text-[24px] wide:px-10" style={{ color: theme.highlight }}>
+        <p className="text-center mb-5 text-[14px] leading-relaxed wide:mb-16 wide:text-[24px] wide:px-10 text-[#666]">
           그림 솔루션은 지금의 마음을 환기해 새롭게 바꿔보거나, <br/>좋은 감정을 더 확장해서 이어가 보는 그림 활동 가이드예요.
         </p>
 
