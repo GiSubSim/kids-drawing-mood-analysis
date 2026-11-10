@@ -13,7 +13,7 @@
   --font-sans: var(--font-pretendard), -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
   
   --font-mono: monospace;
-  --breakpoint-wide: 1800px; /* 1920x1080 이상 큰 화면 */
+  --breakpoint-wide: 112.5rem; /* 1800px, 다른 기준값과 같은 rem 단위로 둔다 */
 }
 
 @media (prefers-color-scheme: dark) {
