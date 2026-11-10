@@ -53,7 +53,7 @@ export const analyzeImage = async (files: File[], persona: string) => {
 
 
   // 4. 같은 사이트의 Next.js API Route로 POST 요청 전송
-  const response = await axios.post<AnalysisResponse>("/api/analyze", formData);
+  const response = await axios.post<AnalysisResponse>("/api/analyze", formData, { timeout: 58000 });
 
   // 5. 실제 데이터만 추출하여 반환
   return response.data;

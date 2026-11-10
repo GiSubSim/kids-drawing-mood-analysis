@@ -6,6 +6,12 @@ import { SYSTEM_PROMPT } from "@/server/prompt";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+// 구 모델은 신규 키에서 404로 막힐 수 있어 순서대로 시도한다.
+const MODEL_CANDIDATES = process.env.GEMINI_MODEL
+  ? [process.env.GEMINI_MODEL]
+  : ["gemini-2.5-flash", "gemini-3.8-flash", "gemini-3.5-flash"];
+const ATTEMPT_TIMEOUT_MS = 30000;
+const DEADLINE_MS = 54000; // maxDuration(60초) 전에 끝낸다
 const MAX_FILES = 4;
 const MAX_PERSONA_LENGTH = 40;
 
@@ -27,26 +33,38 @@ async function analyze(files: File[], persona: string, apiKey: string) {
     })),
   );
 
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: [
-      {
-        role: "user",
-        parts: [
-          { text: `사용자가 선택한 페르소나: ${persona}\n위 페르소나 말투로 JSON 포맷에 맞춰 답변해줘.` },
-          ...images,
+  const startedAt = Date.now();
+  let lastError: unknown = new Error("no_model_available");
+  for (const model of MODEL_CANDIDATES) {
+    const remaining = DEADLINE_MS - (Date.now() - startedAt);
+    if (remaining <= 0) break;
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { text: `사용자가 선택한 페르소나: ${persona}\n위 페르소나 말투로 JSON 포맷에 맞춰 답변해줘.` },
+              ...images,
+            ],
+          },
         ],
-      },
-    ],
-    config: {
-      systemInstruction: SYSTEM_PROMPT,
-      responseMimeType: "application/json",
-      temperature: 0.2,
-      safetySettings: SAFETY_SETTINGS,
-    },
-  });
-
-  return JSON.parse(response.text ?? "");
+        config: {
+          systemInstruction: SYSTEM_PROMPT,
+          responseMimeType: "application/json",
+          temperature: 0.2,
+          safetySettings: SAFETY_SETTINGS,
+          httpOptions: { timeout: Math.min(ATTEMPT_TIMEOUT_MS, remaining) },
+        },
+      });
+      return JSON.parse(response.text ?? "");
+    } catch (e) {
+      lastError = e;
+      console.error(`${model} 실패:`, e instanceof Error ? e.message.slice(0, 300) : e);
+    }
+  }
+  throw lastError;
 }
 
 // 로그 저장이 실패해도 분석 결과는 돌려준다.

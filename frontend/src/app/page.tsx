@@ -29,7 +29,7 @@ export default function Home() {
       setResult(data);
     } catch (e) {
       console.error(e);
-      alert("분석 실패! 서버 연결을 확인해주세요.");
+      alert("분석에 실패했어요. 잠시 후 다시 시도해 주세요.");
     } finally {
       setLoading(false);
     }
