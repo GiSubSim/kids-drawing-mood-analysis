@@ -14,7 +14,7 @@
 
 - Next.js · React · TypeScript · Tailwind CSS
 - Next.js API Route
-- Google Gemini 2.5 Flash
+- Google Gemini 2.5 Flash-Lite
 - Supabase (PostgreSQL)
 
 ## 데이터베이스
