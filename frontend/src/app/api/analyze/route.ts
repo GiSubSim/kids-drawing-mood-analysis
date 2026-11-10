@@ -9,7 +9,7 @@ export const maxDuration = 60;
 // 구 모델은 신규 키에서 404로 막힐 수 있어 순서대로 시도한다.
 const MODEL_CANDIDATES = process.env.GEMINI_MODEL
   ? [process.env.GEMINI_MODEL]
-  : ["gemini-2.5-flash", "gemini-3.8-flash", "gemini-3.5-flash"];
+  : ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.5-flash-lite"];
 const ATTEMPT_TIMEOUT_MS = 30000;
 const DEADLINE_MS = 54000; // maxDuration(60초) 전에 끝낸다
 const MAX_FILES = 4;
