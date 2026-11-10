@@ -35,25 +35,25 @@ export default function PersonaSelector({ persona, setPersona }: Props) {
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 w-full">
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 w-full">
       {options.map((opt) => (
         <button
           key={opt.name}
           onClick={() => setPersona(opt.name)}
-          className={`relative p-6 rounded-[32px] transition-all duration-300 flex flex-col items-center min-h-[360px] shadow-sm ${
+          className={`relative p-4 rounded-2xl transition-all duration-300 flex flex-col items-center min-h-[230px] shadow-sm ${
             persona === opt.name
               ? `${opt.bgColor} text-white scale-105 z-10 shadow-xl`
               : "bg-white text-gray-800 border-2 border-gray-100 hover:border-gray-200"
           }`}
         >
-          <div className={`text-[22px] font-black mb-6 ${persona === opt.name ? "text-white" : "text-gray-900"}`}>{opt.name}</div>
-          <div className="flex-1 flex items-center justify-center mb-6">
-            <img src={opt.img} alt={opt.name} className="w-full max-w-[140px] object-contain" />
+          <div className={`text-[16px] font-bold mb-2 ${persona === opt.name ? "text-white" : "text-gray-900"}`}>{opt.name}</div>
+          <div className="flex-1 flex items-center justify-center mb-2">
+            <img src={opt.img} alt={opt.name} className="w-full max-w-[96px] object-contain" />
           </div>
-          <div className={`text-[14px] leading-relaxed font-bold text-center whitespace-pre-line opacity-90 ${persona === opt.name ? "text-white" : "text-gray-400"}`}>{opt.desc}</div>
+          <div className={`text-[13px] leading-snug font-medium text-center whitespace-pre-line opacity-90 ${persona === opt.name ? "text-white" : "text-gray-400"}`}>{opt.desc}</div>
           {persona === opt.name && (
-            <div className="absolute top-4 right-4 text-white">
-              <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center font-black">✓</div>
+            <div className="absolute top-2 right-2 text-white">
+              <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center text-[13px] font-black">✓</div>
             </div>
           )}
         </button>

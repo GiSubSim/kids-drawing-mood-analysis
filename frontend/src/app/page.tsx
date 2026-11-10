@@ -46,24 +46,24 @@ export default function Home() {
   if (!isStarted) {
     return (
       <main className="min-h-screen bg-[#EBF5FF] flex flex-col items-center justify-between relative overflow-hidden font-sans">
-        <div className="absolute top-[5%] left-[-20%] text-white opacity-20 select-none pointer-events-none" style={{ fontSize: '500px' }}>✱</div>
-        <div className="absolute bottom-[0%] right-[-20%] text-white opacity-20 select-none pointer-events-none" style={{ fontSize: '500px' }}>✱</div>
+        <div className="absolute top-[5%] left-[-20%] text-white opacity-20 select-none pointer-events-none" style={{ fontSize: '320px' }}>✱</div>
+        <div className="absolute bottom-[0%] right-[-20%] text-white opacity-20 select-none pointer-events-none" style={{ fontSize: '320px' }}>✱</div>
         <div className="h-10"></div>
-        <div className="z-10 flex flex-col items-center text-center px-10">
-          <h1 className="text-[56px] sm:text-[72px] font-black text-[#111111] mb-12 tracking-tighter leading-tight">어린이 그림 AI 마음 분석</h1>
-          <div className="space-y-4 mb-20">
-            <p className="text-[28px] sm:text-[36px] text-[#555555] font-medium leading-snug">내가 그린 그림들 속에는</p>
-            <p className="text-[28px] sm:text-[36px] text-[#555555] font-medium leading-snug">나의 기분과 마음이 담겨 있어요.</p>
-            <p className="text-[32px] sm:text-[42px] text-[#333333] font-bold mt-12">요즘 나는 어떤 마음일까요?</p>
+        <div className="z-10 flex flex-col items-center text-center px-6">
+          <h1 className="text-[28px] sm:text-[36px] font-black text-[#111111] mb-5 tracking-tight leading-tight">어린이 그림 AI 마음 분석</h1>
+          <div className="space-y-1 mb-8">
+            <p className="text-[16px] text-[#555555] font-medium leading-relaxed">내가 그린 그림들 속에는</p>
+            <p className="text-[16px] text-[#555555] font-medium leading-relaxed">나의 기분과 마음이 담겨 있어요.</p>
+            <p className="text-[18px] sm:text-[20px] text-[#333333] font-bold mt-4">요즘 나는 어떤 마음일까요?</p>
           </div>
-          <button onClick={() => setIsStarted(true)} className="bg-[#5C9DFF] text-white px-28 py-8 rounded-[30px] font-bold text-[32px] hover:bg-blue-600 transition-all shadow-[0_15px_40px_rgba(92,157,255,0.3)] active:scale-95">시작하기</button>
+          <button onClick={() => setIsStarted(true)} className="bg-[#5C9DFF] text-white px-14 py-3 rounded-xl font-bold text-[17px] hover:bg-blue-600 transition-all shadow-[0_8px_20px_rgba(92,157,255,0.3)] active:scale-95">시작하기</button>
         </div>
-        <footer className="z-10 flex flex-col items-center mb-16">
-          <div className="flex items-center gap-4 mb-4">
-            <img src="/images/logo_artbonbon_school.png" alt="Artbonbon School" className="h-12 w-auto object-contain" />
-            <span className="text-[28px] font-bold text-[#5C9DFF] tracking-tight">아트봉봉스쿨</span>
+        <footer className="z-10 flex flex-col items-center mb-6">
+          <div className="flex items-center gap-2 mb-1">
+            <img src="/images/logo_artbonbon_school.png" alt="Artbonbon School" className="h-6 w-auto object-contain" />
+            <span className="text-[17px] font-bold text-[#5C9DFF] tracking-tight">아트봉봉스쿨</span>
           </div>
-          <p className="text-[#999999] text-[18px] font-medium">©i-Scream arts Co.,Ltd. All rights reserved.</p>
+          <p className="text-[#999999] text-[12px] font-medium">©i-Scream arts Co.,Ltd. All rights reserved.</p>
         </footer>
       </main>
     );
@@ -75,43 +75,43 @@ export default function Home() {
   return (
     <main className={`min-h-screen ${currentBgClass} flex flex-col font-sans overflow-x-hidden relative transition-colors duration-700`}>
       {/* 💡 최상단 왼쪽 로고 (결과 화면 포함 모든 단계 노출) */}
-      <header className="p-10 flex items-center gap-4 z-[110]">
-        <img src="/images/logo_artbonbon_school.png" alt="logo" className="h-10 w-auto" />
-        <span className={`text-[28px] font-bold ${result ? 'text-gray-800' : 'text-[#5C9DFF]'} tracking-tight font-black`}>아트봉봉스쿨</span>
+      <header className="px-6 py-4 flex items-center gap-2 z-[110]">
+        <img src="/images/logo_artbonbon_school.png" alt="logo" className="h-6 w-auto" />
+        <span className={`text-[17px] font-bold ${result ? 'text-gray-800' : 'text-[#5C9DFF]'} tracking-tight font-black`}>아트봉봉스쿨</span>
       </header>
 
       {/* 로딩 대기 화면 */}
       {loading && (
         <div className="fixed inset-0 z-[200] bg-[#EBF5FF] flex flex-col items-center justify-center animate-in fade-in duration-500">
-          <div className="absolute top-[10%] left-[-15%] text-white opacity-40 select-none pointer-events-none" style={{ fontSize: '400px' }}>✱</div>
-          <div className="absolute bottom-[5%] right-[-15%] text-white opacity-40 select-none pointer-events-none" style={{ fontSize: '400px' }}>✱</div>
-          <div className="z-10 text-center flex flex-col items-center">
-            <h2 className="text-[42px] font-black text-[#111111] mb-12 leading-tight">나의 그림을 열심히 분석하고 있어요<br />조금만 기다려 주세요.</h2>
-            <div className="bg-white/60 backdrop-blur-sm px-12 py-8 rounded-[40px] mb-20 shadow-sm border border-white">
-              <p className="text-[22px] text-[#666666] font-bold leading-relaxed">몇 장의 그림만으로는 나의 마음을 다 알수는 없어요.<br />가볍게 즐기며 새로운 마음을 만나보세요.</p>
+          <div className="absolute top-[10%] left-[-15%] text-white opacity-40 select-none pointer-events-none" style={{ fontSize: '260px' }}>✱</div>
+          <div className="absolute bottom-[5%] right-[-15%] text-white opacity-40 select-none pointer-events-none" style={{ fontSize: '260px' }}>✱</div>
+          <div className="z-10 text-center flex flex-col items-center px-6">
+            <h2 className="text-[22px] sm:text-[26px] font-black text-[#111111] mb-6 leading-snug">나의 그림을 열심히 분석하고 있어요<br />조금만 기다려 주세요.</h2>
+            <div className="bg-white/60 backdrop-blur-sm px-6 py-4 rounded-2xl mb-8 shadow-sm border border-white">
+              <p className="text-[15px] text-[#666666] font-medium leading-relaxed">몇 장의 그림만으로는 나의 마음을 다 알수는 없어요.<br />가볍게 즐기며 새로운 마음을 만나보세요.</p>
             </div>
             <div className="flex gap-4">
-              <style jsx>{`@keyframes dotFlow { 0%, 20% { opacity: 0; } 40% { opacity: 1; } 100% { opacity: 1; } } .dot { width: 20px; height: 20px; background-color: white; border-radius: 50%; animation: dotFlow 1.5s infinite; } .dot:nth-child(1) { animation-delay: 0s; } .dot:nth-child(2) { animation-delay: 0.3s; } .dot:nth-child(3) { animation-delay: 0.6s; }`}</style>
+              <style jsx>{`@keyframes dotFlow { 0%, 20% { opacity: 0; } 40% { opacity: 1; } 100% { opacity: 1; } } .dot { width: 12px; height: 12px; background-color: white; border-radius: 50%; animation: dotFlow 1.5s infinite; } .dot:nth-child(1) { animation-delay: 0s; } .dot:nth-child(2) { animation-delay: 0.3s; } .dot:nth-child(3) { animation-delay: 0.6s; }`}</style>
               <div className="dot"></div><div className="dot"></div><div className="dot"></div>
             </div>
           </div>
         </div>
       )}
 
-      <div className="flex-1 w-full flex flex-col items-center justify-start pt-4 px-4 pb-20">
+      <div className="flex-1 w-full flex flex-col items-center justify-start pt-2 px-4 pb-8">
         {!result ? (
-          <div className="w-[95%] max-w-[1200px] bg-white rounded-[60px] shadow-[0_20px_60px_rgba(0,0,0,0.05)] border-[3px] border-[#D9EEF2] min-h-[850px] flex flex-col items-center justify-center p-16 animate-in fade-in slide-in-from-bottom-5 duration-700">
+          <div className="w-full max-w-[880px] bg-white rounded-3xl shadow-[0_10px_30px_rgba(0,0,0,0.05)] border-2 border-[#D9EEF2] flex flex-col items-center justify-center p-6 sm:p-10 animate-in fade-in slide-in-from-bottom-5 duration-700">
             {currentStep === 1 ? (
               <ImageUploader files={files} setFiles={setFiles} onNext={() => setCurrentStep(2)} />
             ) : (
               <div className="w-full flex flex-col items-center">
-                <div className="text-center mb-12">
-                  <h2 className="text-[36px] font-black text-[#111111] mb-2">누구와 함께 그림을 분석해 볼까요?</h2>
-                  <p className="text-[20px] text-gray-400 font-bold">같은 그림이라도 분석하는 내용과 말투가 달라요!</p>
+                <div className="text-center mb-6">
+                  <h2 className="text-[22px] sm:text-[26px] font-black text-[#111111] mb-1">누구와 함께 그림을 분석해 볼까요?</h2>
+                  <p className="text-[15px] text-gray-400 font-medium">같은 그림이라도 분석하는 내용과 말투가 달라요!</p>
                 </div>
                 <PersonaSelector persona={persona} setPersona={setPersona} />
-                <div className="mt-20">
-                  <button onClick={handleStartAnalysis} disabled={!persona} className={`px-32 py-6 rounded-[22px] font-black text-[28px] transition-all shadow-lg ${persona ? "bg-[#5C9DFF] text-white hover:bg-[#4A8DFF] active:scale-95 shadow-[0_10px_20px_rgba(92,157,255,0.3)]" : "bg-[#EEEEEE] text-[#BBBBBB] cursor-not-allowed"}`}>분석하기</button>
+                <div className="mt-6">
+                  <button onClick={handleStartAnalysis} disabled={!persona} className={`px-14 py-3 rounded-xl font-bold text-[17px] transition-all shadow-md ${persona ? "bg-[#5C9DFF] text-white hover:bg-[#4A8DFF] active:scale-95 shadow-[0_10px_20px_rgba(92,157,255,0.3)]" : "bg-[#EEEEEE] text-[#BBBBBB] cursor-not-allowed"}`}>분석하기</button>
                 </div>
               </div>
             )}
