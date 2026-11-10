@@ -24,3 +24,5 @@ backend/.venv
 frontend/node_modules
 __pycache__
 .env
+.vercel
+.env*
