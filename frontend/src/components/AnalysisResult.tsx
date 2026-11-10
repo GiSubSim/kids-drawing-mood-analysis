@@ -23,13 +23,22 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
   const [previews, setPreviews] = useState<string[]>([]);
   const [shuffledKeywords, setShuffledKeywords] = useState<KeywordItem[]>([]);
   const [isCompact, setIsCompact] = useState(false); // 좁은 화면에서는 차트 설명을 숨긴다
+  const [isWide, setIsWide] = useState(false); // 1800px 이상에서는 차트 글자를 키운다
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 639px)");
-    const update = () => setIsCompact(media.matches);
+    const wide = window.matchMedia("(min-width: 1800px)");
+    const update = () => {
+      setIsCompact(media.matches);
+      setIsWide(wide.matches);
+    };
     update();
     media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
+    wide.addEventListener("change", update);
+    return () => {
+      media.removeEventListener("change", update);
+      wide.removeEventListener("change", update);
+    };
   }, []);
 
   useEffect(() => {
@@ -40,17 +49,17 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
 
   useEffect(() => {
     const sizeClasses = [
-      "text-[30px] sm:text-[36px] font-black", 
-      "text-[26px] sm:text-[30px] font-black", 
-      "text-[22px] sm:text-[26px] font-bold",  
-      "text-[20px] sm:text-[22px] font-bold",  
-      "text-[18px] font-bold"   
+      "text-[30px] sm:text-[36px] wide:text-[72px] font-black", 
+      "text-[26px] sm:text-[30px] wide:text-[56px] font-black", 
+      "text-[22px] sm:text-[26px] wide:text-[48px] font-bold",  
+      "text-[20px] sm:text-[22px] wide:text-[40px] font-bold",  
+      "text-[18px] wide:text-[32px] font-bold"   
     ];
 
     const keywords: KeywordItem[] = analysis_result.word_cloud.map((word, i) => ({
       word: word,
       color: analysis_result.top_5_colors[i],
-      sizeClass: sizeClasses[i] || "text-[16px]",
+      sizeClass: sizeClasses[i] || "text-[16px] wide:text-[24px]",
       originalIndex: i
     }));
 
@@ -80,7 +89,7 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
   const theme = personaThemes[persona] || personaThemes["마음박사 페페"];
   
   // 💡 [핵심] 공통 텍스트 스타일 (폰트 크기 15~16px)
-  const commonTextStyle = "text-[15px] sm:text-[16px] leading-[1.75] font-medium text-[#333] whitespace-pre-line break-keep";
+  const commonTextStyle = "text-[15px] sm:text-[16px] leading-[1.75] font-medium text-[#333] wide:text-[24px] wide:leading-[1.8] wide:font-bold whitespace-pre-line break-keep";
 
   const highlightStyle = {
     background: `linear-gradient(to top, ${theme.highlight} 50%, transparent 50%)`,
@@ -105,7 +114,7 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
 
     switch (data.subject) {
       case '즐거움':
-        dy = -18; 
+        dy = isWide ? -27 : -18; 
         break;
       case '궁금증':
         dx = 10;  
@@ -113,11 +122,11 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
         break;
       case '반짝임':
         dx = 10;  
-        dy = 28;  
+        dy = isWide ? 40 : 28;  
         break;
       case '휴식':
         dx = 0;
-        dy = 28;  
+        dy = isWide ? 40 : 28;  
         break;
       case '멍때림':
         dx = -10; 
@@ -132,10 +141,10 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
         <text 
           x={x + dx} 
           y={y + dy} 
-          dy={isCompact ? 0 : -10} 
+          dy={isCompact ? 0 : isWide ? -15 : -10} 
           textAnchor={textAnchor} 
           fill="#333" 
-          style={{ fontSize: '15px', fontWeight: '800', fontFamily: 'var(--font-pretendard)' }}
+          style={{ fontSize: isWide ? '22px' : '15px', fontWeight: '800', fontFamily: 'var(--font-pretendard)' }}
         >
           {data.subject} {data.icon}
         </text>
@@ -144,10 +153,10 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
           y={y + dy} 
           textAnchor={textAnchor} 
           fill="#888" 
-          style={{ fontSize: '12px', fontWeight: '600', lineHeight: '1.2', fontFamily: 'var(--font-pretendard)' }}
+          style={{ fontSize: isWide ? '14px' : '12px', fontWeight: '600', lineHeight: '1.2', fontFamily: 'var(--font-pretendard)' }}
         >
           {!isCompact && data.desc.split('\n').map((line, i) => (
-            <tspan x={x + dx} dy={i === 0 ? 6 : 14} key={i}>{line}</tspan>
+            <tspan x={x + dx} dy={isWide ? (i === 0 ? 10 : 18) : (i === 0 ? 6 : 14)} key={i}>{line}</tspan>
           ))}
         </text>
       </g>
@@ -185,33 +194,33 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
   };
 
   return (
-    <div className="w-full max-w-[760px] mx-auto space-y-5 pb-6 font-sans animate-in fade-in duration-1000">
+    <div className="w-full max-w-[760px] mx-auto space-y-5 pb-6 wide:max-w-[1100px] wide:space-y-16 wide:pb-24 font-sans animate-in fade-in duration-1000">
       
       {/* 1. 상단 타이틀 & 캐릭터 */}
-      <section className="flex flex-col items-center relative">
+      <section className="flex flex-col items-center relative wide:pt-4">
         <div className="text-center mb-4 relative z-20">
-          <p className="text-[14px] font-medium text-[#666] mb-1">{theme.subTitle}</p>
-          <h1 className="text-[26px] sm:text-[30px] font-black text-[#111] tracking-tight text-center">마음 분석 결과</h1>
+          <p className="text-[14px] font-medium text-[#666] mb-1 wide:text-[20px] wide:font-bold wide:mb-2">{theme.subTitle}</p>
+          <h1 className="text-[26px] sm:text-[30px] font-black text-[#111] tracking-tight text-center wide:text-[52px]">마음 분석 결과</h1>
         </div>
         <div className="w-full flex justify-center items-end relative z-0">
           <div className="relative">
-            <img src={`/images/${theme.key}_half.png`} alt={persona} className="w-[170px] sm:w-[190px] h-auto object-contain animate-in fade-in slide-in-from-bottom-4 duration-1000 z-10 relative" />
+            <img src={`/images/${theme.key}_half.png`} alt={persona} className="w-[170px] sm:w-[190px] h-auto wide:w-[420px] object-contain animate-in fade-in slide-in-from-bottom-4 duration-1000 z-10 relative" />
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" className="absolute top-10 -left-10 z-0"><path d="M12 0L14.59 9.41L24 12L14.59 14.59L12 24L9.41 14.59L0 12L9.41 9.41L12 0Z" fill={theme.main} /></svg>
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" className="absolute top-1/3 -right-12 z-0"><path d="M12 0L14.59 9.41L24 12L14.59 14.59L12 24L9.41 14.59L0 12L9.41 9.41L12 0Z" fill={theme.highlight} /></svg>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="absolute bottom-20 -right-6 z-20 opacity-70"><path d="M12 0L14.59 9.41L24 12L14.59 14.59L12 24L9.41 14.59L0 12L9.41 9.41L12 0Z" fill={theme.main} /></svg>
           </div>
         </div>
-        <div className="w-full bg-white rounded-3xl p-6 sm:p-8 shadow-lg relative z-10 -mt-6">
+        <div className="w-full bg-white rounded-3xl p-6 sm:p-8 shadow-lg relative z-10 -mt-6 wide:rounded-[40px] wide:p-14 wide:shadow-2xl wide:-mt-16">
            <div className={`${commonTextStyle} text-center`}>{commentary_sections[0]?.content}</div>
         </div>
       </section>
 
       {/* 2. 그림 섹션 */}
-      <section className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-white/30">
-        <h3 className="text-center mb-4"><span className="text-[19px] font-bold" style={highlightStyle}>그림</span></h3>
-        <div className="flex flex-wrap justify-center gap-3"> 
+      <section className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-white/30 wide:rounded-[40px] wide:p-12">
+        <h3 className="text-center mb-4 wide:mb-10"><span className="text-[19px] font-bold wide:text-[30px] wide:font-black" style={highlightStyle}>그림</span></h3>
+        <div className="flex flex-wrap justify-center gap-3 wide:gap-4"> 
           {previews.map((src, i) => (
-            <div key={i} className="w-36 h-36 sm:w-40 sm:h-40 rounded-2xl overflow-hidden border-2 border-[#f0f0f0] bg-[#fafafa] shadow-inner flex-shrink-0">
+            <div key={i} className="w-36 h-36 sm:w-40 sm:h-40 rounded-2xl wide:w-[230px] wide:h-[230px] wide:rounded-[32px] overflow-hidden border-2 border-[#f0f0f0] bg-[#fafafa] shadow-inner flex-shrink-0">
               <img src={src} className="w-full h-full object-cover" alt="drawing" />
             </div>
           ))}
@@ -219,9 +228,9 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
       </section>
 
       {/* 3. 마음 키워드 섹션 */}
-      <section className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-white/30 text-center">
-        <h3 className="mb-4"><span className="text-[19px] font-bold" style={highlightStyle}>마음 키워드</span></h3>
-        <div className="w-full max-w-[600px] mx-auto flex flex-col gap-y-3 mb-5 py-1">
+      <section className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-white/30 wide:rounded-[40px] wide:p-16 text-center">
+        <h3 className="mb-4 wide:mb-14"><span className="text-[19px] font-bold wide:text-[30px] wide:font-black" style={highlightStyle}>마음 키워드</span></h3>
+        <div className="w-full max-w-[600px] mx-auto flex flex-col gap-y-3 mb-5 py-1 wide:max-w-[850px] wide:gap-y-8 wide:mb-12 wide:py-4">
           {shuffledKeywords.map((item, index) => (
             <div key={item.originalIndex} className={`w-full flex items-center ${getRowAlignment(index)} animate-in fade-in slide-in-from-bottom-2 duration-700`}>
               <span 
@@ -233,15 +242,15 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
             </div>
           ))}
         </div>
-        <div className={`${commonTextStyle} sm:px-4`}>
+        <div className={`${commonTextStyle} sm:px-4 wide:px-10`}>
           {commentary_sections[1]?.content}
         </div>
       </section>
 
       {/* 4. 마음 에너지 섹션 */}
-      <section className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-white/30 text-center">
-        <h3 className="mb-4"><span className="text-[19px] font-bold" style={highlightStyle}>마음 에너지</span></h3>
-        <div className="h-[300px] sm:h-[360px] w-full mb-3"> 
+      <section className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-white/30 wide:rounded-[40px] wide:p-16 text-center">
+        <h3 className="mb-4 wide:mb-14"><span className="text-[19px] font-bold wide:text-[30px] wide:font-black" style={highlightStyle}>마음 에너지</span></h3>
+        <div className="h-[300px] sm:h-[360px] w-full mb-3 wide:h-[650px] wide:mb-10 wide:-mt-10"> 
           <ResponsiveContainer width="100%" height="100%">
             <RadarChart cx="50%" cy="50%" outerRadius={isCompact ? "48%" : "60%"} data={chartData}>
               <PolarGrid stroke="#ddd" />
@@ -251,11 +260,11 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
             </RadarChart>
           </ResponsiveContainer>
         </div>
-        <div className="space-y-4">
+        <div className="space-y-4 wide:space-y-12">
           
           {/* 💡 [수정] max-w-[7000px] 및 mx-auto 추가하여 아래 텍스트와 너비 동일하게 제한 */}
           <div className="flex justify-center">
-            <p className={`${commonTextStyle} text-center max-w-[600px]`}>
+            <p className={`${commonTextStyle} text-center max-w-[600px] wide:max-w-[700px] wide:px-4`}>
               {formatEnergyText(analysis_result.persona_energy_sentence)}
             </p>
           </div>
@@ -264,7 +273,7 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
           
           {/* 아래 설명글 */}
           <div className="flex justify-center">
-            <p className={`${commonTextStyle} text-center max-w-[600px]`}>
+            <p className={`${commonTextStyle} text-center max-w-[600px] wide:max-w-[850px] wide:px-4`}>
               {commentary_sections[2]?.content}
             </p>
           </div>
@@ -272,31 +281,31 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
       </section>
 
       {/* 5. 그림 솔루션 섹션 */}
-      <section className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-white/30 relative overflow-hidden">
-        <h3 className="text-center mb-2"><span className="text-[19px] font-bold" style={highlightStyle}>그림 솔루션</span></h3>
+      <section className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-white/30 wide:rounded-[40px] wide:p-16 relative overflow-hidden">
+        <h3 className="text-center mb-2 wide:mb-8"><span className="text-[19px] font-bold wide:text-[30px] wide:font-black" style={highlightStyle}>그림 솔루션</span></h3>
         
-        <p className="text-center mb-5 text-[14px] leading-relaxed" style={{ color: theme.highlight }}>
+        <p className="text-center mb-5 text-[14px] leading-relaxed wide:mb-16 wide:text-[24px] wide:px-10" style={{ color: theme.highlight }}>
           그림 솔루션은 지금의 마음을 환기해 새롭게 바꿔보거나, <br/>좋은 감정을 더 확장해서 이어가 보는 그림 활동 가이드예요.
         </p>
 
-        <div className="flex flex-col md:flex-row gap-5 items-start mb-5">
-          <div className="flex-1 space-y-4">
+        <div className="flex flex-col md:flex-row gap-5 items-start mb-5 wide:gap-12 wide:mb-20">
+          <div className="flex-1 space-y-4 wide:space-y-16">
             {commentary_sections.slice(3).map((section, idx) => (
               <div key={idx} className={`${commonTextStyle}`}>
                 {section.content}
               </div>
             ))}
           </div>
-          <div className="w-[140px] flex-shrink-0 self-center md:self-end relative">
+          <div className="w-[140px] flex-shrink-0 self-center md:self-end relative wide:w-[340px] wide:pt-10">
             <svg width="30" height="30" viewBox="0 0 24 24" fill="none" className="absolute top-10 -left-4 animate-pulse">
               <path d="M12 0L14.59 9.41L24 12L14.59 14.59L12 24L9.41 14.59L0 12L9.41 9.41L12 0Z" fill={theme.highlight} />
             </svg>
             <img src={`/images/${theme.key}_side.png`} alt="side char" className="w-full h-auto object-contain" />
           </div>
         </div>
-        <div className="bg-[#FBFBFB] rounded-2xl p-5 border-l-4 border-amber-300 text-left shadow-inner">
-           <h4 className="text-amber-600 font-bold text-[16px] mb-2">⚠️ 결과가 생각한 것과 다른가요?</h4>
-           <ul className="space-y-1 text-[14px] text-[#666] font-medium list-disc ml-5 leading-relaxed">
+        <div className="bg-[#FBFBFB] rounded-2xl p-5 border-l-4 border-amber-300 text-left shadow-inner wide:mt-16 wide:rounded-[36px] wide:p-14 wide:border-l-[14px]">
+           <h4 className="text-amber-600 font-bold text-[16px] mb-2 wide:font-black wide:text-[26px] wide:mb-8">⚠️ 결과가 생각한 것과 다른가요?</h4>
+           <ul className="space-y-1 text-[14px] text-[#666] font-medium list-disc ml-5 leading-relaxed wide:space-y-6 wide:text-[22px] wide:font-bold wide:ml-10">
              <li>같은 그림이라도 바라보는 마음에 따라 달라질 수 있어요.</li>
              <li>분석 결과는 정답이 아니라, 마음을 가볍고 즐겁게 이해하기 위한 작은 힌트예요.</li>
              <li>앞으로 나의 마음을 소중히 아끼고 돌보며, 더 즐겁게 자라나는 어린이가 되길 응원 할게요!</li>
@@ -305,8 +314,8 @@ export default function AnalysisResult({ data, persona, files, onReset }: Props)
       </section>
 
       {/* 확인 버튼 */}
-      <div className="flex justify-center pt-1">
-        <button onClick={onReset} className="bg-[#5C9DFF] text-white px-16 py-3 rounded-xl font-bold text-[17px] hover:bg-[#4A8DFF] transition-all shadow-md active:scale-95">확인</button>
+      <div className="flex justify-center pt-1 wide:pt-10 wide:pb-20">
+        <button onClick={onReset} className="bg-[#5C9DFF] text-white px-16 py-3 rounded-xl font-bold text-[17px] wide:px-48 wide:py-9 wide:rounded-[32px] wide:font-black wide:text-[36px] wide:shadow-2xl hover:bg-[#4A8DFF] transition-all shadow-md active:scale-95">확인</button>
       </div>
     </div>
   );
